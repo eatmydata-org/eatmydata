@@ -31,5 +31,12 @@ public/demo/
 *.njsproj
 *.sln
 *.sw?
+
+# ai
 CLAUDE.md
-.CLAUDE
+.claude
+
+# deploy
+keys
+secrets
+deploy

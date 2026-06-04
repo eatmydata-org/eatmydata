@@ -1,7 +1,7 @@
 {
-    "name": "analyst",
-    "private": true,
-    "version": "0.0.0",
+    "name": "eatmydata.ai",
+    "version": "0.0.1",
+    "license": "MIT",
     "type": "module",
     "scripts": {
         "dev": "vite",
