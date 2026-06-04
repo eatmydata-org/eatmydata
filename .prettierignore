@@ -1,0 +1,16 @@
+# Dependencies & build output
+node_modules
+dist
+dist-ssr
+build
+
+# Vendored submodules (each has its own upstream style; never reformat)
+contrib
+
+# WASM / generated artifacts
+public/qjs.wasm
+public/wa-sqlite.wasm
+public/demo
+
+# Lockfile
+pnpm-lock.yaml

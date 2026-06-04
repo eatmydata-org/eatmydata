@@ -1,0 +1,88 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/no-null-bytes.py"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install *)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm build *)",
+      "Bash(git -C /Users/denis/projects/rh/analyst submodule add https://github.com/quickjs-ng/quickjs.git contrib/quickjs)",
+      "Read(//opt/**)",
+      "Bash(clang --print-targets)",
+      "Bash(make wasm *)",
+      "Bash(pnpm tsc *)",
+      "Bash(pnpm dev *)",
+      "Bash(curl -sI http://localhost:5174/qjs.wasm)",
+      "Bash(curl -s http://localhost:5174/)",
+      "Bash(node -e ' *)",
+      "Bash(node --experimental-wasi-unstable-preview1 -e ' *)",
+      "Bash(kill %1)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(pnpm dlx *)",
+      "Bash(curl -s https://shadcn-solid.com/docs/installation/vite)",
+      "Bash(curl -sL https://shadcn-solid.com/docs/installation/vite -o /tmp/shadcn-vite.html)",
+      "Read(//tmp/**)",
+      "Bash(curl -sLI https://shadcn-solid.com/docs/installation/vite)",
+      "Bash(curl -sL https://shadcn-solid.vercel.app/docs/installation/vite -o /tmp/shadcn-vite.html)",
+      "Read(//private/tmp/**)",
+      "Bash(curl -sLI https://shadcn-solid.vercel.app/docs/installation/vite)",
+      "Bash(curl -sL https://raw.githubusercontent.com/hngngn/shadcn-solid/main/packages/cli/src/utils/get-config.ts)",
+      "Bash(curl -sL \"https://api.github.com/repos/hngngn/shadcn-solid/contents/packages/cli/src/utils\")",
+      "Bash(curl -sL \"https://api.github.com/repos/hngngn/shadcn-solid/contents/packages\")",
+      "Bash(curl -sL \"https://api.github.com/repos/hngngn/shadcn-solid/contents/\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('\\\\n'.join\\(x['name'] for x in d\\)\\)\")",
+      "Bash(curl -sL \"https://api.github.com/repos/hngngn/shadcn-solid/contents/apps\")",
+      "Bash(pnpm view *)",
+      "Bash(curl -sL \"https://api.github.com/repos/hngngn/shadcn-solid/git/trees/main\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('\\\\n'.join\\(x['path'] for x in d['tree']\\)\\)\")",
+      "Read(//Users/denis/.pnpm-store/v3/**)",
+      "Read(//Users/denis/Library/pnpm/**)",
+      "Bash(pnpm remove *)",
+      "Bash(curl -sLI https://shadcn-solid.com/registry/styles/default/button.json)",
+      "Bash(curl -sLI https://shadcn-solid.com/r/button.json)",
+      "Bash(grep -oE 'shadcn-solid\\\\.vercel\\\\.app[^`\"]{0,80}' /Users/denis/Library/pnpm/store/v3/tmp/dlx-65263/node_modules/shadcn-solid/dist/index.js)",
+      "Bash(grep -oE 'baseUrl[^,;]{0,200}' /Users/denis/Library/pnpm/store/v3/tmp/dlx-65263/node_modules/shadcn-solid/dist/index.js)",
+      "Bash(curl -sL \"https://api.github.com/repos/hngngn/shadcn-solid/branches\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('\\\\n'.join\\(b['name'] for b in d\\)\\)\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/hngngn/shadcn-solid/main/apps/docs/src/registry/ui/button.tsx\")",
+      "Bash(git clone *)",
+      "Bash(curl -sI https://shadcn-solid.netlify.app/)",
+      "Bash(curl -sI https://shadcn-solid.netlify.app/registry/styles/default/button.json)",
+      "Bash(curl -s \"https://shadcn-solid.netlify.app/registry/styles/default/button.json\")",
+      "Bash(git -C /Users/denis/projects/rh/analyst submodule add https://github.com/hngngn/shadcn-solid.git contrib/shadcn-solid)",
+      "Bash(git -C /Users/denis/projects/rh/analyst status --short)",
+      "Bash(pnpm exec *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5174/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5174/chat)",
+      "Bash(curl -sI http://localhost:5174/src/lib/ai.ts)",
+      "Bash(curl -s \"http://localhost:5174/src/routes/chat.tsx\")",
+      "Bash(python3 -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(json.dumps\\(p.get\\('exports'\\), indent=2\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\('main:',p.get\\('main'\\)\\); print\\('module:',p.get\\('module'\\)\\); print\\('browser:',p.get\\('browser'\\)\\); print\\('exports:',json.dumps\\(p.get\\('exports'\\),indent=2\\)\\)\")",
+      "Bash(grep -E '^\\(extend|debug|unified|micromark|solid-markdown|remark-gfm\\)$')",
+      "Bash(python3 -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\('type:',p.get\\('type'\\)\\); print\\('main:',p.get\\('main'\\)\\); print\\('module:',p.get\\('module'\\)\\); print\\('exports:',json.dumps\\(p.get\\('exports'\\),indent=2\\)[:500]\\)\")",
+      "Bash(python3 -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\('type:',p.get\\('type'\\)\\); print\\('main:',p.get\\('main'\\)\\); print\\('exports:',p.get\\('exports'\\)\\)\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code} \" http://localhost:5174/chat)",
+      "Bash(curl -s \"http://localhost:5174/node_modules/.vite/deps/_metadata.json\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('bundled:', sorted\\(d.get\\('optimized', {}\\).keys\\(\\)\\)[:30]\\)\")",
+      "Bash(pnpm test *)",
+      "Bash(lsof -nP -iTCP:5173 -sTCP:LISTEN)",
+      "Bash(lsof -nP -iTCP:5174 -sTCP:LISTEN)",
+      "Bash(curl -fsS http://localhost:5173 -o /dev/null -w \"HTTP %{http_code}\\\\n\")",
+      "Bash(curl -fsS 'http://localhost:5173/src/components/chat-view.tsx?t=now' -o /tmp/chatview.out -w \"HTTP %{http_code}, %{size_download} bytes\\\\n\")",
+      "Bash(curl -fsS 'http://localhost:5173/src/components/debug-log-view.tsx' -o /tmp/dlv.out -w \"HTTP %{http_code}, %{size_download} bytes\\\\n\")",
+      "Bash(curl -fsS 'http://localhost:5173/src/lib/debug-log.ts' -o /tmp/dl.out -w \"HTTP %{http_code}, %{size_download} bytes\\\\n\")",
+      "Bash(curl -fsS 'http://localhost:5173/src/lib/agent/log-middleware.ts' -o /tmp/lm.out -w \"HTTP %{http_code}, %{size_download} bytes\\\\n\")"
+    ]
+  }
+}

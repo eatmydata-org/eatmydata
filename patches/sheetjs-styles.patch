@@ -1,0 +1,535 @@
+diff -urN a/bits/20_jsutils.js b/bits/20_jsutils.js
+--- a/bits/20_jsutils.js
++++ b/bits/20_jsutils.js
+@@ -136,11 +136,19 @@
+ }
+ 
+ function dup(o/*:any*/)/*:any*/ {
++	var oc = dup_impl(o);
++	if (o.xlsxCss) {
++		oc.xlsxCss = o.xlsxCss;
++	}
++	return oc;
++}
++
++function dup_impl(o/*:any*/)/*:any*/ {
+ 	if(typeof JSON != 'undefined' && !Array.isArray(o)) return JSON.parse(JSON.stringify(o));
+ 	if(typeof o != 'object' || o == null) return o;
+ 	if(o instanceof Date) return new Date(o.getTime());
+ 	var out = {};
+-	for(var k in o) if(Object.prototype.hasOwnProperty.call(o, k)) out[k] = dup(o[k]);
++	for(var k in o) if(Object.prototype.hasOwnProperty.call(o, k)) out[k] = dup_impl(o[k]);
+ 	return out;
+ }
+ 
+diff -urN a/bits/24_hoppers.js b/bits/24_hoppers.js
+--- a/bits/24_hoppers.js
++++ b/bits/24_hoppers.js
+@@ -21,8 +21,7 @@
+ /* control buffer usage for fixed-length buffers */
+ function buf_array()/*:BufArray*/ {
+ 	var bufs/*:Array<Block>*/ = [], blksz = has_buf ? 16384 : 2048;
+-	var has_buf_subarray = has_buf && (typeof new_buf(blksz).subarray == "function");
+-
++	var has_buf_copy = has_buf && (typeof new_buf(blksz).copy == "function");
+ 	var newblk = function ba_newblk(sz/*:number*/)/*:Block*/ {
+ 		var o/*:Block*/ = (new_buf(sz)/*:any*/);
+ 		prep_blob(o, 0);
+@@ -56,10 +55,7 @@
+ 	};
+ 
+ 	var push = function ba_push(buf) {
+-		if(curbuf.l > 0) bufs.push(curbuf.slice(0, curbuf.l));
+-		bufs.push(buf);
+-		curbuf = has_buf_subarray ? curbuf.subarray(curbuf.l || 0) : curbuf.slice(curbuf.l || 0);
+-		prep_blob(curbuf, 0);
++		endbuf(); curbuf = buf; if(curbuf.l == null) curbuf.l = curbuf.length; next(blksz);
+ 	};
+ 
+ 	return ({ next:next, push:push, end:end, _bufs:bufs, end2:end2 }/*:any*/);
+diff -urN a/bits/38_xlstypes.js b/bits/38_xlstypes.js
+--- a/bits/38_xlstypes.js
++++ b/bits/38_xlstypes.js
+@@ -485,7 +485,7 @@
+ /* 2.5.294 XLUnicodeString */
+ function parse_XLUnicodeString(blob, length, opts) {
+ 	var cch = blob.read_shift(opts && opts.biff == 2 ? 1 : 2);
+-	if(cch === 0) { if(opts.biff <= 8) blob.l++; return ""; }
++	if(cch === 0) { blob.l++; return ""; }
+ 	return parse_XLUnicodeStringNoCch(blob, cch, opts);
+ }
+ /* BIFF5 override */
+diff -urN a/bits/47_styxml.js b/bits/47_styxml.js
+--- a/bits/47_styxml.js
++++ b/bits/47_styxml.js
+@@ -355,7 +355,7 @@
+ 			case '</AlternateContent>': pass = false; break;
+ 
+ 			/* 18.2.10 extLst CT_ExtensionList ? */
+-			case '<extLst': case '<extLst>': case '</extLst>': break;
++			case  '<extLst': case '<extLst>': case '</extLst>': break;
+ 			case '<ext': pass = true; break;
+ 			case '</ext>': pass = false; break;
+ 			default: if(opts && opts.WTF) {
+@@ -369,7 +369,14 @@
+ 	var o/*:Array<string>*/ = [];
+ 	o[o.length] = (writextag('cellXfs',null));
+ 	cellXfs.forEach(function(c) {
+-		o[o.length] = (writextag('xf', null, c));
++		if (c.alignment) {
++			var alignment = c.alignment;
++			delete c.alignment;
++			o[o.length] = (writextag('xf', writextag('alignment', null, alignment), c));
++		}
++		else {
++			o[o.length] = (writextag('xf', null, c));
++		}
+ 	});
+ 	o[o.length] = ("</cellXfs>");
+ 	if(o.length === 2) return "";
+@@ -414,16 +421,24 @@
+ };
+ })();
+ 
++function apply_ifdef(cb, defv) {
++	return cb ? cb(defv) : defv;
++}
++
+ function write_sty_xml(wb/*:Workbook*/, opts)/*:string*/ {
+ 	var o = [XML_HEADER, writextag('styleSheet', null, {
+ 		'xmlns': XMLNS_main[0],
+ 		'xmlns:vt': XMLNS.vt
+ 	})], w;
+-	if(wb.SSF && (w = write_numFmts(wb.SSF)) != null) o[o.length] = w;
+-	o[o.length] = ('<fonts count="1"><font><sz val="12"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>');
+-	o[o.length] = ('<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>');
+-	o[o.length] = ('<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>');
+-	o[o.length] = ('<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>');
++	var css = opts.xlsxCss;
++	if(wb.SSF && (w = write_numFmts(wb.SSF)) != null) {
++		o[o.length] = apply_ifdef(css.numFmts, w);
++	}
++	o[o.length] = apply_ifdef(css.fonts, '<fonts count="1"><font><sz val="12"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>');
++	o[o.length] = apply_ifdef(css.fills, '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>');
++	o[o.length] = apply_ifdef(css.borders, '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>');
++	o[o.length] = apply_ifdef(css.cellStyle, '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>');
++	apply_ifdef(css.extendCellXfs, opts.cellXfs);
+ 	if((w = write_cellXfs(opts.cellXfs))) o[o.length] = (w);
+ 	o[o.length] = ('<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>');
+ 	o[o.length] = ('<dxfs count="0"/>');
+diff -urN a/bits/51_xlsbmeta.js b/bits/51_xlsbmeta.js
+--- a/bits/51_xlsbmeta.js
++++ b/bits/51_xlsbmeta.js
+@@ -52,10 +52,6 @@
+   var metatype = 2;
+   recordhopper(data, function(val, R, RT) {
+     switch (RT) {
+-      case 58:
+-        break;
+-      case 59:
+-        break;
+       case 335:
+         out.Types.push({ name: val.name });
+         break;
+diff -urN a/bits/53_externlink.js b/bits/53_externlink.js
+--- a/bits/53_externlink.js
++++ b/bits/53_externlink.js
+@@ -35,7 +35,6 @@
+ 			case 0x0249: /* 'BrtSupNameFmla' */
+ 			case 0x024A: /* 'BrtSupNameBits' */
+ 			case 0x024B: /* 'BrtSupNameEnd' */
+-			case 0x13F4: /* 'BrtExternalLinksAlternateUrls' */
+ 				break;
+ 
+ 			case 0x0023: /* 'BrtFRTBegin' */
+diff -urN a/bits/55_vml.js b/bits/55_vml.js
+--- a/bits/55_vml.js
++++ b/bits/55_vml.js
+@@ -1,8 +1,7 @@
+ /* L.5.5.2 SpreadsheetML Comments + VML Schema */
+ function parse_vml(data/*:string*/, sheet, comments) {
+ 	var cidx = 0;
+-	/* see CT_Group for other possible elements */
+-	(str_match_xml_ns_g(data, "(?:shape|rect)")||[]).forEach(function(m) {
++	(str_match_xml_ns_g(data, "shape")||[]).forEach(function(m) {
+ 		var type = "";
+ 		var hidden = true;
+ 		var aidx = -1;
+diff -urN a/bits/61_fcommon.js b/bits/61_fcommon.js
+--- a/bits/61_fcommon.js
++++ b/bits/61_fcommon.js
+@@ -23,10 +23,9 @@
+ 	};
+ })();
+ 
+-/* TODO: check if engines support \b */
+-var crefregex = /(^|[^._A-Za-z0-9])(\$?)([A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])(\$?)(\d{1,7})(?![_.\(A-Za-z0-9])/g;
++var crefregex = /(^|[^._A-Z0-9])(\$?)([A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])(\$?)(\d{1,7})(?![_.\(A-Za-z0-9])/g;
+ try {
+-	crefregex = /(^|[^._A-Za-z0-9])([$]?)([A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])([$]?)(10[0-3]\d{4}|104[0-7]\d{3}|1048[0-4]\d{2}|10485[0-6]\d|104857[0-6]|[1-9]\d{0,5})(?![_.\(A-Za-z0-9])/g;
++	crefregex = /(^|[^._A-Z0-9])([$]?)([A-Z]{1,2}|[A-W][A-Z]{2}|X[A-E][A-Z]|XF[A-D])([$]?)(10[0-3]\d{4}|104[0-7]\d{3}|1048[0-4]\d{2}|10485[0-6]\d|104857[0-6]|[1-9]\d{0,5})(?![_.\(A-Za-z0-9])/g;
+ }catch(e){}
+ var a1_to_rc = /*#__PURE__*/(function(){
+ 	return function a1_to_rc(fstr/*:string*/, base/*:CellAddress*/) {
+diff -urN a/bits/66_wscommon.js b/bits/66_wscommon.js
+--- a/bits/66_wscommon.js
++++ b/bits/66_wscommon.js
+@@ -57,6 +57,21 @@
+ 	if(margins.footer == null) margins.footer = defs[5];
+ }
+ 
++function style_equals(a, b)
++{
++	if (a == undefined || b == undefined) return false;
++	if (a.numFmtId !== b.numFmtId) return false;
++	if (a.fontId !== b.fontId) return false;
++	if (a.fillId !== b.fillId) return false;
++	if (a.borderId !== b.borderId) return false;
++	if (a.xfId !== b.xfId) return false;
++	if (a.alignment === undefined && b.alignment === undefined) return true;
++	if (a.alignment === undefined || b.alignment === undefined) return false;
++	return a.alignment.vertical == b.alignment.vertical
++		&& a.alignment.horizontal == b.alignment.horizontal
++		&& a.alignment.wrapText == b.alignment.wrapText;
++}
++
+ function get_cell_style(styles/*:Array<any>*/, cell/*:Cell*/, opts) {
+ 	var z = opts.revssf[cell.z != null ? cell.z : "General"];
+ 	var i = 0x3c, len = styles.length;
+@@ -69,15 +84,48 @@
+ 			break;
+ 		}
+ 	}
+-	for(i = 0; i != len; ++i) if(styles[i].numFmtId === z) return i;
+-	styles[len] = {
+-		numFmtId:z,
+-		fontId:0,
+-		fillId:0,
+-		borderId:0,
+-		xfId:0,
+-		applyNumberFormat:1
++	// Resolve every numeric id to a concrete value (default 0) before both lookup
++	// and write. Two bugs are fixed here together:
++	//   1. The lookup used to compare styles[i].numFmtId against `z` (derived from
++	//      cell.z), while new entries were written with cell.s.numFmtId. Custom
++	//      formats applied via cell.s never matched existing entries, so every
++	//      formatted cell created a fresh xf and styles.xml ballooned.
++	//   2. Missing fillId/borderId/xfId leaked into the XML as the string
++	//      "undefined" (and prevented dedup, since "undefined" !== 0). Defaulting
++	//      to 0 matches the OOXML schema (cell xf must reference real indices).
++	var resolved = {
++		numFmtId: (cell.s && cell.s.numFmtId !== undefined) ? cell.s.numFmtId : (z || 0),
++		fontId:   (cell.s && cell.s.fontId   !== undefined) ? cell.s.fontId   : 0,
++		fillId:   (cell.s && cell.s.fillId   !== undefined) ? cell.s.fillId   : 0,
++		borderId: (cell.s && cell.s.borderId !== undefined) ? cell.s.borderId : 0,
++		xfId:     (cell.s && cell.s.xfId     !== undefined) ? cell.s.xfId     : 0,
++		alignment: cell.s ? cell.s.alignment : undefined,
++	};
++	for(i = 0; i != len; ++i) {
++		if(style_equals(styles[i], resolved)) {
++			return i;
++		}
++	}
++	// see write_cellXfs for writing
++	var style = {
++		numFmtId: resolved.numFmtId,
++		applyNumberFormat: 1,
++		fontId: resolved.fontId,
++		fillId: resolved.fillId,
++		borderId: resolved.borderId,
++		xfId: resolved.xfId,
+ 	};
++	// Only attach alignment when defined; otherwise write_cellXfs's else-branch
++	// would serialize the property as the string "undefined".
++	if (resolved.alignment !== undefined) style.alignment = resolved.alignment;
++	cell.s && (
++		cell.s.fontId && (style.applyFont = 1),
++		cell.s.fillId && (style.applyFill = 1),
++		cell.s.borderId && (style.applyBorder = 1),
++		cell.s.alignment && (style.applyAlignment = 1)
++	);
++
++	styles[len] = style;
+ 	return len;
+ }
+ 
+diff -urN a/bits/67_wsxml.js b/bits/67_wsxml.js
+--- a/bits/67_wsxml.js
++++ b/bits/67_wsxml.js
+@@ -6,7 +6,7 @@
+ var hlinkregex = /<(?:\w+:)?hyperlink [^<>]*>/mg;
+ var dimregex = /"(\w*:\w*)"/;
+ var colregex = /<(?:\w+:)?col\b[^<>]*[\/]?>/g;
+-var afregex = /<(?:\w:)?autoFilter[^>]*([\/]|>([\s\S]*)<\/(?:\w:)?autoFilter)>/g;
++var afregex = /<(?:\w+:)?autoFilter[^>]*/g;
+ var marginregex= /<(?:\w+:)?pageMargins[^<>]*\/>/g;
+ var sheetprregex = /<(?:\w+:)?sheetPr\b[^<>]*?\/>/;
+ 
+@@ -217,7 +217,7 @@
+ }
+ 
+ function parse_ws_xml_autofilter(data/*:string*/) {
+-	var o = { ref: (data.match(/ref=["']([^"']*)["']/)||[])[1]};
++	var o = { ref: (data.match(/ref="([^"]*)"/)||[])[1]};
+ 	return o;
+ }
+ function write_ws_xml_autofilter(data, ws, wb, idx)/*:string*/ {
+@@ -417,7 +417,7 @@
+ 						} else if(/*::cref != null && cref[0] != null && */cref[0].indexOf('t="shared"') > -1) {
+ 							// TODO: parse formula
+ 							ftag = parsexmltag(cref[0]);
+-							var ___f = unescapexml(utf8read(cref[1]), true);
++							var ___f = unescapexml(utf8read(cref[1]));
+ 							if(!opts.xlfn) ___f = _xlfn(___f);
+ 							sharedf[parseInt(ftag.si, 10)] = [ftag, ___f, tag.r];
+ 						}
+@@ -529,7 +529,7 @@
+ 		r = [];
+ 		rr = encode_row(R);
+ 		var data_R = dense ? data[R] : [];
+-		if(data_R) for(C = range.s.c; C <= range.e.c; ++C) {
++		for(C = range.s.c; C <= range.e.c; ++C) {
+ 			ref = cols[C] + rr;
+ 			var _cell = dense ? data_R[C] : ws[ref];
+ 			if(_cell === undefined) continue;
+diff -urN a/bits/68_wsbin.js b/bits/68_wsbin.js
+--- a/bits/68_wsbin.js
++++ b/bits/68_wsbin.js
+@@ -505,7 +505,7 @@
+ }
+ function parse_BrtDVal14(/*data, length, opts*/) {
+ }
+-/* [MS-XLSB] 2.1.7.62 Worksheet */
++/* [MS-XLSB] 2.1.7.61 Worksheet */
+ function parse_ws_bin(data, _opts, idx, rels, wb/*:WBWBProps*/, themes, styles)/*:Worksheet*/ {
+ 	if(!data) return data;
+ 	var opts = _opts || {};
+diff -urN a/bits/77_parsetab.js b/bits/77_parsetab.js
+--- a/bits/77_parsetab.js
++++ b/bits/77_parsetab.js
+@@ -856,25 +856,6 @@
+ 	0x13E8: { /* n:"BrtEndCalcFeatures", */ T:-1 },
+ 	0x13E9: { /* n:"BrtCalcFeature" */ },
+ 	0x13EB: { /* n:"BrtExternalLinksPr" */ },
+-	0x13EC: { /* n:"BrtPivotCacheImplicitMeasureSupport" */ },
+-	0x13ED: { /* n:"BrtPivotFieldIgnorableAfter" */ },
+-	0x13EE: { /* n:"BrtPivotHierarchyIgnorableAfter" */ },
+-	0x13EF: { /* n:"BrtPivotDataFieldFutureData" */ },
+-	0x13F1: { /* n:"BrtPivotCacheRichData" */ },
+-	0x13F4: { /* n:"BrtExternalLinksAlternateUrls" */ },
+-	0x13F5: { /* n:"BrtBeginPivotVersionInfo" */ },
+-	0x13F6: { /* n:"BrtEndPivotVersionInfo" */ },
+-	0x13F7: { /* n:"BrtBeginCacheVersionInfo" */ },
+-	0x13F8: { /* n:"BrtEndCacheVersionInfo" */ },
+-	0x13F9: { /* n:"BrtPivotRequiredFeature" */ },
+-	0x13FA: { /* n:"BrtPivotLastUsedFeature" */ },
+-	0x13FD: { /* n:"BrtExternalCodeService" */ },
+-	0x1407: { /* n:"BrtShowDataTypeIcons" */ },
+-	0x140A: { /* n:"BrtSXDIAggregation" */ },
+-	0x140B: { /* n:"BrtPivotFieldFeatureSupportInfo" */ },
+-	0x140C: { /* n:"BrtPivotCacheAutoRefresh" */ },
+-	0x140E: { /* n:"BrtShowDataTypeIconsUserShView" */ },
+-	0x140F: { /* n:"BrtWorkbookCompatibilityVersion" */ },
+ 	0xFFFF: { n:"" }
+ };
+ 
+diff -urN a/bits/78_writebiff.js b/bits/78_writebiff.js
+--- a/bits/78_writebiff.js
++++ b/bits/78_writebiff.js
+@@ -431,54 +431,8 @@
+ 	});
+ }
+ 
+-function write_ws_protect_biff8(sp) {
+-	/* SheetProtection */
+-	var flags = 0x0000;
+-	[
+-		["objects",             false, 0x0001], // fObjects - Bit 0 (Edit objects)
+-		["scenarios",           false, 0x0002], // fScenarios - Bit 1 (Edit scenarios)
+-		["formatCells",          true, 0x0004], // fFormatCells - Bit 2 (Change cell formatting)
+-		["formatColumns",        true, 0x0008], // fFormatColumns - Bit 3 (Change column formatting)
+-		["formatRows",           true, 0x0010], // fFormatRows - Bit 4 (Change row formatting)
+-		["insertColumns",        true, 0x0020], // fInsertColumns - Bit 5 (Insert columns)
+-		["insertRows",           true, 0x0040], // fInsertRows - Bit 6 (Insert rows)
+-		["insertHyperlinks",     true, 0x0080], // fInsertHyperlinks - Bit Bit 7 (Insert hyperlinks)
+-		["deleteColumns",        true, 0x0100], // fDeleteColumns - Bit 8 (Delete columns)
+-		["deleteRows",           true, 0x0200], // fDeleteRows - Bit 9 (Delete rows)
+-		["selectLockedCells",   false, 0x0400], // fSelLockedCells - Bit 10 (Select locked cells)
+-		["sort",                 true, 0x0800], // fSort - Bit 11 (Sort a cell range)
+-		["autoFilter",           true, 0x1000], // fAutoFilter - Bit 12 (Edit auto filters)
+-		["pivotTables",          true, 0x2000], // fPivotTables - Bit 13 (Edit PivotTables)
+-		["selectUnlockedCells", false, 0x4000]  // fSelUnlockedCells - Bit 14 (Select unlocked cells)
+-	].forEach(function(n) {
+-		if(n[1]) flags |= sp[n[0]] != null && !sp[n[0]] ? n[2] : 0x0000;
+-		else     flags |= sp[n[0]] != null && sp[n[0]] ? 0x0000 : n[2];
+-	});
+-
+-	/* [MS-XLS] 2.4.112 */
+-	var featHdr = new_buf(23);
+-	/* [MS-XLS] 2.5.135 */
+-	featHdr.write_shift(2, 0x0867);
+-	featHdr.write_shift(2, 0x0000);
+-	featHdr.write_shift(4, 0x00000000);
+-	featHdr.write_shift(4, 0x00000000);
+-	/* [MS-XLS] 2.5.237 */
+-	featHdr.write_shift(2, 0x0002); // SharedFeatureType ISFPROTECTION
+-	/* Reserved byte */
+-	featHdr.write_shift(1, 0x01);
+-	/* cbHdrData */
+-	featHdr.write_shift(4, 0xffffffff);
+-	/* [MS-XLS] 2.5.104 */
+-	featHdr.write_shift(4, flags);
+-
+-	return featHdr;
+-}
+-
+ function write_FEAT(ba, ws) {
+ 	/* [MS-XLS] 2.4.112 */
+-	/* ISFPROTECTION */
+-	if(ws['!protect']) write_biff_rec(ba, 0x0867 /* FeatHdr */, write_ws_protect_biff8(ws['!protect']));
+-	/* ISFFEC2 */
+ 	var o = new_buf(19);
+ 	o.write_shift(4, 0x867); o.write_shift(4, 0); o.write_shift(4, 0);
+ 	o.write_shift(2, 3); o.write_shift(1, 1); o.write_shift(4, 0);
+@@ -583,14 +537,6 @@
+ 	/* Footer (string) */
+ 	write_biff_rec(ba, 0x0083 /* HCenter */, writebool(false));
+ 	write_biff_rec(ba, 0x0084 /* VCenter */, writebool(false));
+-	/* PROTECTION */
+-	if(ws['!protect']){
+-		var sp = ws['!protect'];
+-		/* [MS-XLS] 2.4.207 */
+-		write_biff_rec(ba, 0x0012 /* Protect */, writeuint16(1));
+-		/* [MS-XLS] 2.4.191 */
+-		if(sp.password) write_biff_rec(ba, 0x0013 /* Password */, writeuint16(crypto_CreatePasswordVerifier_Method1(sp.password)));
+-	}
+ 	/* ... */
+ 	if(b8) write_ws_cols_biff8(ba, ws["!cols"]);
+ 	/* ... */
+diff -urN a/bits/79_html.js b/bits/79_html.js
+--- a/bits/79_html.js
++++ b/bits/79_html.js
+@@ -93,7 +93,7 @@
+ 			if(cell.v != null) sp["data-v"] = escapehtml(cell.v instanceof Date ? cell.v.toISOString() : cell.v);
+ 			if(cell.z != null) sp["data-z"] = cell.z;
+ 			if(cell.f != null) sp["data-f"] = escapehtml(cell.f);
+-			if(cell.l && (cell.l.Target || "#").charAt(0) != "#" && (!o.sanitizeLinks || (cell.l.Target || "").slice(0, 11).toLowerCase() != 'javascript:')) w = '<a href="' + escapehtml(cell.l.Target) +'">' + w + '</a>';
++			if(cell.l && (cell.l.Target || "#").charAt(0) != "#") w = '<a href="' + escapehtml(cell.l.Target) +'">' + w + '</a>';
+ 		}
+ 		sp.id = (o.id || "sjs") + "-" + coord;
+ 		oo.push(writextag('td', w, sp));
+@@ -137,6 +137,12 @@
+ }
+ 
+ function sheet_add_dom(ws/*:Worksheet*/, table/*:HTMLElement*/, _opts/*:?any*/)/*:Worksheet*/ {
++	var rows/*:HTMLCollection<HTMLTableRowElement>*/ = table.rows;
++	if(!rows) {
++		/* not an HTML TABLE */
++		throw "Unsupported origin when " + table.tagName + " is not a TABLE";
++	}
++
+ 	var opts = _opts || {};
+ 	var dense = ws["!data"] != null;
+ 	var or_R = 0, or_C = 0;
+@@ -148,6 +154,7 @@
+ 		}
+ 	}
+ 
++	var sheetRows = Math.min(opts.sheetRows||10000000, rows.length);
+ 	var range/*:Range*/ = {s:{r:0,c:0},e:{r:or_R,c:or_C}};
+ 	if(ws["!ref"]) {
+ 		var _range/*:Range*/ = decode_range(ws["!ref"]);
+@@ -157,15 +164,6 @@
+ 		range.e.c = Math.max(range.e.c, _range.e.c);
+ 		if(or_R == -1) range.e.r = or_R = _range.e.r + 1;
+ 	}
+-
+-
+-	var rows/*:HTMLCollection<HTMLTableRowElement>*/ = table.rows;
+-	if(!rows) {
+-		/* not an HTML TABLE */
+-		throw "Unsupported origin when " + table.tagName + " is not a TABLE";
+-	}
+-	var sheetRows = Math.min(opts.sheetRows||10000000, rows.length);
+-
+ 	var merges/*:Array<Range>*/ = [], midx = 0;
+ 	var rowinfo/*:Array<RowInfo>*/ = ws["!rows"] || (ws["!rows"] = []);
+ 	var _R = 0, R = 0, _C = 0, C = 0, RS = 0, CS = 0;
+@@ -189,9 +187,7 @@
+ 			}
+ 			/* TODO: figure out how to extract nonstandard mso- style */
+ 			CS = +elt.getAttribute("colspan") || 1;
+-			if( ((RS = (+elt.getAttribute("rowspan") || 1)))>1 || CS>1) {
+-				merges.push({s:{r:R + or_R,c:C + or_C},e:{r:R + or_R + (RS||1) - 1, c:C + or_C + (CS||1) - 1}});
+-			}
++			if( ((RS = (+elt.getAttribute("rowspan") || 1)))>1 || CS>1) merges.push({s:{r:R + or_R,c:C + or_C},e:{r:R + or_R + (RS||1) - 1, c:C + or_C + (CS||1) - 1}});
+ 			var o/*:Cell*/ = {t:'s', v:v};
+ 			var _t/*:string*/ = elt.getAttribute("data-t") || elt.getAttribute("t") || "";
+ 			if(v != null) {
+diff -urN a/bits/80_parseods.js b/bits/80_parseods.js
+--- a/bits/80_parseods.js
++++ b/bits/80_parseods.js
+@@ -205,7 +205,7 @@
+ 			// TODO: handle more complex maps
+ 			y = parsexmltag(Rn[0], false);
+ 			if(unescapexml(y["condition"]) == "value()>=0") NF = number_format_map[y["apply-style-name"]] + ";" + NF;
+-			else if(_opts && _opts.WTF) console.error("ODS number format may be incorrect: " + y["condition"]);
++			else console.error("ODS number format may be incorrect: " + y["condition"]);
+ 			break;
+ 
+ 		case 'number': // <number:number> 16.29.3
+@@ -764,10 +764,6 @@
+ 						_Ref = ods_to_csf_3D(atag.Target.slice(1));
+ 						atag.Target = "#" + _Ref[0] + "!" + _Ref[1];
+ 					} else if(atag.Target.match(/^\.\.[\\\/]/)) atag.Target = atag.Target.slice(3);
+-					/* Appendix D.2 Hyperlink Titles */
+-					if(atag.title) {
+-						atag.Tooltip = unescapexml(atag.title); delete atag.title;
+-					}
+ 				}
+ 				break;
+ 
+diff -urN a/bits/84_defaults.js b/bits/84_defaults.js
+--- a/bits/84_defaults.js
++++ b/bits/84_defaults.js
+@@ -39,7 +39,7 @@
+ 
+ 	['bookType', 'xlsx'], /* Type of workbook (xlsx/m/b) */
+ 
+-	['compression', false], /* Use file compression */
++	['compression', true], /* Use file compression (DEFLATE). XLSX is a ZIP package and Excel itself always compresses; defaulting to Stored produces files an order of magnitude larger than expected. */
+ 
+ 	['WTF', false] /* WTF mode (throws errors) */
+ ])(opts);
+diff -urN a/bits/87_read.js b/bits/87_read.js
+--- a/bits/87_read.js
++++ b/bits/87_read.js
+@@ -116,7 +116,6 @@
+ 		case 0x7B: if(n[1] === 0x5C && n[2] === 0x72 && n[3] === 0x74) return rtf_to_workbook(d, o); break;
+ 		case 0x0A: case 0x0D: case 0x20: return read_plaintext_raw(d, o);
+ 		case 0x89: if(n[1] === 0x50 && n[2] === 0x4E && n[3] === 0x47) throw new Error("PNG Image File is not a spreadsheet"); break;
+-		case 0x25: if(n[1] === 0x50 && n[2] === 0x44 && n[3] === 0x46) throw new Error("PDF File is not a spreadsheet"); break;
+ 		case 0x08: if(n[1] === 0xE7) throw new Error("Unsupported Multiplan 1.x file!"); break;
+ 		case 0x0C:
+ 			if(n[1] === 0xEC) throw new Error("Unsupported Multiplan 2.x file!");
+diff -urN a/bits/90_utils.js b/bits/90_utils.js
+--- a/bits/90_utils.js
++++ b/bits/90_utils.js
+@@ -24,7 +24,7 @@
+ 		switch(val.t){
+ 			case 'z': if(v == null) break; continue;
+ 			case 'e': v = (v == 0 ? null : void 0); break;
+-			case 's': case 'b': break;
++			case 's': case 'b':
+ 			case 'n': if(!val.z || !fmt_is_date(val.z)) break;
+ 			v = numdate(v); // TODO: date1904 setting should also be stored in worksheet object
+ 			if(typeof v == "number") break;
+@@ -116,7 +116,7 @@
+ 		else if(val.v != null) {
+ 			isempty = false;
+ 			txt = ''+(o.rawNumbers && val.t == "n" ? val.v : format_cell(val, null, o));
+-			for(var i = 0, cc = 0; i !== txt.length; ++i) if((cc = txt.charCodeAt(i)) === fs || cc === rs || cc === 10 ||cc === 13 ||  cc === 34 || o.forceQuotes) {txt = "\"" + txt.replace(qreg, '""') + "\""; break; }
++			for(var i = 0, cc = 0; i !== txt.length; ++i) if((cc = txt.charCodeAt(i)) === fs || cc === rs || cc === 34 || o.forceQuotes) {txt = "\"" + txt.replace(qreg, '""') + "\""; break; }
+ 			if(txt == "ID" && w == 0 && row.length == 0) txt = '"ID"';
+ 		} else if(val.f != null && !val.F) {
+ 			isempty = false;

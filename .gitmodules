@@ -1,0 +1,22 @@
+[submodule "contrib/quickjs"]
+	path = contrib/quickjs
+	url = https://github.com/quickjs-ng/quickjs.git
+[submodule "contrib/shadcn-solid"]
+	path = contrib/shadcn-solid
+	url = https://github.com/hngngn/shadcn-solid.git
+[submodule "contrib/sheetjs"]
+	path = contrib/sheetjs
+	url = https://git.sheetjs.com/sheetjs/sheetjs.git
+	ignore = dirty
+[submodule "contrib/northwind-sqlite3"]
+	path = contrib/northwind-sqlite3
+	url = https://github.com/jpwhite3/northwind-SQLite3.git
+[submodule "contrib/contoso-data-generator-v2"]
+	path = contrib/contoso-data-generator-v2
+	url = https://github.com/sql-bi/Contoso-Data-Generator-V2.git
+[submodule "contrib/adventureworks-sqlite"]
+	path = contrib/adventureworks-sqlite
+	url = https://github.com/martinandersen3d/AdventureWorks-for-SQLite.git
+[submodule "contrib/wa-sqlite"]
+	path = contrib/wa-sqlite
+	url = https://github.com/rhashimoto/wa-sqlite.git

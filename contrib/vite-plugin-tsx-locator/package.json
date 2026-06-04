@@ -1,0 +1,16 @@
+{
+  "name": "vite-plugin-tsx-locator",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only: tag Solid component roots with data-tsx-element, and Shift+Alt+click any element to open its source in the editor.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./runtime.js"
+  },
+  "files": [
+    "src",
+    "runtime.js"
+  ]
+}

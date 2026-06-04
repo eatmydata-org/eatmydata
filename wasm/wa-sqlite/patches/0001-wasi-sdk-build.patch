@@ -1,0 +1,132 @@
+diff --git a/src/libauthorizer.c b/src/libauthorizer.c
+index 61fb1a1..6e49c1b 100644
+--- a/src/libauthorizer.c
++++ b/src/libauthorizer.c
+@@ -1,6 +1,6 @@
+ // Copyright 2024 Roy T. Hashimoto. All Rights Reserved.
+ #include <stdio.h>
+-#include <emscripten.h>
++// emscripten.h removed for wasi-sdk build (analyst project)
+ #include <sqlite3.h>
+ 
+ #include "libadapters.h"
+@@ -21,7 +21,7 @@ static int libauthorizer_xAuthorize(
+   return CALL_JS(ippipppp, pApp, pApp, iAction, param3, param4, param5, param6);
+ }
+ 
+-int EMSCRIPTEN_KEEPALIVE libauthorizer_set_authorizer(
++int __attribute__((used,visibility("default"))) libauthorizer_set_authorizer(
+   sqlite3* db,
+   int xAuthorizer,
+   void* pApp) {
+diff --git a/src/libfunction.c b/src/libfunction.c
+index 0cf9ec4..9b2caa3 100644
+--- a/src/libfunction.c
++++ b/src/libfunction.c
+@@ -2,7 +2,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <strings.h>
+-#include <emscripten.h>
++// emscripten.h removed for wasi-sdk build (analyst project)
+ #include <sqlite3.h>
+ 
+ #include "libadapters.h"
+@@ -36,7 +36,7 @@ static void libfunction_xFinal(sqlite3_context* ctx) {
+   FUNC_JS(vppp, pApp, xFinal, ctx);
+ }
+ 
+-int EMSCRIPTEN_KEEPALIVE libfunction_create_function(
++int __attribute__((used,visibility("default"))) libfunction_create_function(
+   sqlite3* db,
+   const char* zFunctionName,
+   int nArg,
+diff --git a/src/libhook.c b/src/libhook.c
+index 4582e19..9f69074 100644
+--- a/src/libhook.c
++++ b/src/libhook.c
+@@ -1,6 +1,6 @@
+ // Copyright 2024 Roy T. Hashimoto. All Rights Reserved.
+ #include <stdio.h>
+-#include <emscripten.h>
++// emscripten.h removed for wasi-sdk build (analyst project)
+ #include <sqlite3.h>
+ 
+ #include "libadapters.h"
+@@ -27,10 +27,10 @@ static void libhook_xUpdateHook(
+   CALL_JS(vppippii, pApp, pApp, iUpdateType, dbName, tblName, lo32, hi32);
+ }
+ 
+-void EMSCRIPTEN_KEEPALIVE libhook_commit_hook(sqlite3* db, int xCommitHook, void* pApp) {
++void __attribute__((used,visibility("default"))) libhook_commit_hook(sqlite3* db, int xCommitHook, void* pApp) {
+   sqlite3_commit_hook(db, xCommitHook ? &libhook_xCommitHook : NULL, pApp);
+ }
+ 
+-void EMSCRIPTEN_KEEPALIVE libhook_update_hook(sqlite3* db, int xUpdateHook, void* pApp) {
++void __attribute__((used,visibility("default"))) libhook_update_hook(sqlite3* db, int xUpdateHook, void* pApp) {
+   sqlite3_update_hook(db, xUpdateHook ? &libhook_xUpdateHook : NULL, pApp);
+ }
+\ No newline at end of file
+diff --git a/src/libprogress.c b/src/libprogress.c
+index 1bd84a3..3f98150 100644
+--- a/src/libprogress.c
++++ b/src/libprogress.c
+@@ -1,6 +1,6 @@
+ // Copyright 2024 Roy T. Hashimoto. All Rights Reserved.
+ #include <stdio.h>
+-#include <emscripten.h>
++// emscripten.h removed for wasi-sdk build (analyst project)
+ #include <sqlite3.h>
+ 
+ #include "libadapters.h"
+@@ -15,7 +15,7 @@ static int libprogress_xProgress(void* pApp) {
+   return PROGRESS_JS(ipp, pApp, pApp);
+ }
+ 
+-void EMSCRIPTEN_KEEPALIVE libprogress_progress_handler(
++void __attribute__((used,visibility("default"))) libprogress_progress_handler(
+   sqlite3* db,
+   int nOps,
+   int xProgress,
+diff --git a/src/libvfs.c b/src/libvfs.c
+index 2f2c1e6..8b7d97c 100644
+--- a/src/libvfs.c
++++ b/src/libvfs.c
+@@ -2,7 +2,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <strings.h>
+-#include <emscripten.h>
++// emscripten.h removed for wasi-sdk build (analyst project)
+ #include <sqlite3.h>
+ 
+ #include "libadapters.h"
+@@ -180,7 +180,7 @@ static int libvfs_xCurrentTimeInt64(sqlite3_vfs* pVfs, sqlite3_int64* pTime) {
+   return VFS_JS(ipppp, pVfs, xCurrentTimeInt64, pVfs, pTime);
+ }
+ 
+-int EMSCRIPTEN_KEEPALIVE libvfs_vfs_register(
++int __attribute__((used,visibility("default"))) libvfs_vfs_register(
+   const char* zName,
+   int mxPathName,
+   int methodMask,
+diff --git a/src/main.c b/src/main.c
+index f479fc9..0b4473a 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -1,5 +1,5 @@
+ // Copyright 2024 Roy T. Hashimoto. All Rights Reserved.
+-#include <emscripten.h>
++// emscripten.h removed for wasi-sdk build (analyst project)
+ #include <sqlite3.h>
+ 
+ // Some SQLite API functions take a pointer to a function that frees
+@@ -7,7 +7,7 @@
+ // that calls sqlite3_free(), it is more efficient to pass the sqlite3_free
+ // function pointer directly. This function provides the C pointer to
+ // JavaScript.
+-void* EMSCRIPTEN_KEEPALIVE getSqliteFree() {
++void* __attribute__((used,visibility("default"))) getSqliteFree() {
+   return sqlite3_free;
+ }
+ 

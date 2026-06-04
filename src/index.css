@@ -1,0 +1,384 @@
+@import 'tailwindcss';
+@plugin "tailwindcss-animate";
+
+@custom-variant dark ([data-kb-theme="dark"] &);
+
+:root {
+    --background: hsl(0 0% 100%);
+    --foreground: hsl(0 0% 3.9%);
+    --card: hsl(0 0% 100%);
+    --card-foreground: hsl(0 0% 3.9%);
+    --popover: hsl(0 0% 100%);
+    --popover-foreground: hsl(0 0% 3.9%);
+    --primary: hsl(0 0% 9%);
+    --primary-foreground: hsl(0 0% 98%);
+    --secondary: hsl(0 0% 96.1%);
+    --secondary-foreground: hsl(0 0% 9%);
+    --muted: hsl(0 0% 96.1%);
+    --muted-foreground: hsl(0 0% 45.1%);
+    --accent: hsl(0 0% 96.1%);
+    --accent-foreground: hsl(0 0% 9%);
+    --destructive: hsl(0 84.2% 60.2%);
+    --destructive-foreground: hsl(0 0% 98%);
+    --border: hsl(0 0% 89.8%);
+    --input: hsl(0 0% 89.8%);
+    --ring: hsl(0 0% 75%);
+    --radius: 0.5rem;
+}
+
+[data-kb-theme='dark'] {
+    --background: hsl(0 0% 3.9%);
+    --foreground: hsl(0 0% 98%);
+    --card: hsl(0 0% 3.9%);
+    --card-foreground: hsl(0 0% 98%);
+    --popover: hsl(0 0% 3.9%);
+    --popover-foreground: hsl(0 0% 98%);
+    --primary: hsl(0 0% 98%);
+    --primary-foreground: hsl(0 0% 9%);
+    --secondary: hsl(0 0% 14.9%);
+    --secondary-foreground: hsl(0 0% 98%);
+    --muted: hsl(0 0% 14.9%);
+    --muted-foreground: hsl(0 0% 63.9%);
+    --accent: hsl(0 0% 14.9%);
+    --accent-foreground: hsl(0 0% 98%);
+    --destructive: hsl(0 62.8% 30.6%);
+    --destructive-foreground: hsl(0 0% 98%);
+    --border: hsl(0 0% 14.9%);
+    --input: hsl(0 0% 14.9%);
+    --ring: hsl(0 0% 85%);
+}
+
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    --radius-lg: var(--radius);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-sm: calc(var(--radius) - 4px);
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    html,
+    body,
+    #root {
+        height: 100%;
+        overflow: hidden;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+    button:not(:disabled),
+    [role='button']:not(:disabled) {
+        cursor: pointer;
+    }
+    /* Kobalte's visually-hidden checkbox input is `position: absolute` with no
+     * top/left, so its containing block defaults to <html>. Focus on the
+     * input triggers scroll-into-view against <html>, which scrolls the root
+     * even though body/html have `overflow: hidden` — content gets pushed up
+     * and a white strip appears at the bottom, growing on each toggle.
+     * Anchor the containing block to the checkbox root so the auto-scroll
+     * stays inside the local scroll container. */
+    [data-slot='checkbox'] {
+        position: relative;
+    }
+    :focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+    }
+}
+
+/* ─────────────────────────── streamed text animation ─────────────────────── */
+
+@keyframes sd-blur-in {
+    from {
+        opacity: 0;
+        filter: blur(4px);
+    }
+    to {
+        opacity: 1;
+        filter: blur(0);
+    }
+}
+
+@keyframes sd-caret-blink {
+    0%,
+    50% {
+        opacity: 0.6;
+    }
+    50.01%,
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes sd-bubble-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.sd-word {
+    display: inline;
+    animation: sd-blur-in 180ms ease-out both;
+}
+
+/* Caret appended at the end of the last block within a streaming bubble. */
+.sd-bubble[data-streaming='true'] > :last-child::after {
+    content: '▍';
+    display: inline-block;
+    margin-left: 0.05em;
+    animation: sd-caret-blink 1s steps(1, end) infinite;
+    color: currentColor;
+    font-weight: normal;
+    transform: translateY(0.05em);
+}
+
+/* Waiting-for-first-token dots (no bubble). */
+@keyframes sd-dot-bounce {
+    0%,
+    80%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.4;
+    }
+    40% {
+        transform: translateY(-3px);
+        opacity: 1;
+    }
+}
+.sd-dot {
+    display: inline-block;
+    animation: sd-dot-bounce 1.2s ease-in-out infinite;
+}
+.sd-dot-2 {
+    animation-delay: 0.15s;
+}
+.sd-dot-3 {
+    animation-delay: 0.3s;
+}
+
+.sd-bubble-in {
+    animation: sd-bubble-in 200ms ease-out both;
+}
+
+/* ─────────────────────────── timeline rail ──────────────────────────────── */
+
+/*
+ * The chat is a single flat list of rows: user bubbles, AI text rows, and
+ * AI action rows. AI rows render a 1px rail on their left that touches the
+ * next AI row's rail — producing one continuous vertical line through the
+ * entire response, regardless of whether the action originated from the
+ * orchestrator or a sub-agent. Action rows additionally render a dot on the
+ * rail. The rail breaks where a user message intervenes.
+ *
+ * To make adjacent rails join with no visible seam, .sd-rail-row uses
+ * vertical padding (not margin) for spacing — the rail spans the full row
+ * height including the padding, so two siblings' rails meet edge-to-edge.
+ */
+.sd-rail-row {
+    position: relative;
+    padding: 0.5rem 0 0.5rem 1.75rem;
+}
+
+.sd-rail-row::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+}
+
+/* Trim the rail at the start of an AI run (after a user bubble or at the
+ * top of the conversation) so the line emerges from the first dot rather
+ * than from above. */
+.sd-rail-row:first-child::before,
+.sd-row-user + .sd-rail-row::before {
+    top: 0.875rem;
+}
+
+/* And trim at the end of an AI run so the rail terminates at the last item
+ * instead of dangling below. */
+.sd-rail-row:last-child::before,
+.sd-rail-row:has(+ .sd-row-user)::before {
+    bottom: auto;
+    height: 0.875rem;
+}
+
+/* If a rail row is the only thing between user bubbles, just show the dot. */
+.sd-row-user + .sd-rail-row:has(+ .sd-row-user)::before {
+    display: none;
+}
+
+.sd-rail-dot::after {
+    content: '';
+    position: absolute;
+    /* Dot sits on the rail line (left: 4px, width: 1px) and vertically
+     * aligns with the centre of the first line of text in the row
+     * (row top padding 0.5rem + roughly half a text-sm line). */
+    left: 0;
+    top: 0.8rem;
+    width: 9px;
+    height: 9px;
+    border-radius: 9999px;
+    background: var(--border);
+    border: none;
+}
+
+/* User-bubble rows get vertical breathing room. */
+.sd-row-user {
+    padding: 0.75rem 0;
+}
+
+/* ─────────────────────────── markdown body styling ───────────────────────── */
+
+.sd-bubble {
+    line-height: 1.55;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+}
+
+.sd-bubble :is(p, ul, ol, pre, blockquote, table, hr) {
+    margin: 0 0 0.85em 0;
+}
+
+.sd-bubble :is(p, ul, ol, pre, blockquote, table, hr):last-child {
+    margin-bottom: 0;
+}
+
+.sd-bubble :is(p, ul, ol, pre, blockquote, table, hr):first-child {
+    margin-top: 0;
+}
+
+.sd-bubble ul,
+.sd-bubble ol {
+    padding-left: 1.5em;
+}
+
+.sd-bubble ul {
+    list-style: disc;
+}
+.sd-bubble ol {
+    list-style: decimal;
+}
+.sd-bubble ul ul {
+    list-style: circle;
+}
+.sd-bubble ul ul ul {
+    list-style: square;
+}
+
+.sd-bubble li + li {
+    margin-top: 0.2em;
+}
+
+.sd-bubble li::marker {
+    color: color-mix(in srgb, currentColor 60%, transparent);
+}
+
+.sd-bubble :is(h1, h2, h3, h4, h5, h6) {
+    font-weight: 600;
+    line-height: 1.25;
+    margin: 1.4em 0 0.5em 0;
+}
+
+.sd-bubble h1 {
+    font-size: 1.5em;
+}
+.sd-bubble h2 {
+    font-size: 1.3em;
+}
+.sd-bubble h3 {
+    font-size: 1.15em;
+}
+
+.sd-bubble :is(h1, h2, h3, h4, h5, h6):first-child {
+    margin-top: 0;
+}
+
+.sd-bubble code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.875em;
+    color: inherit;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+    padding: 0.1em 0.35em;
+    border-radius: 0.25rem;
+}
+
+.sd-bubble pre {
+    color: inherit;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+    border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    border-radius: var(--radius);
+    padding: 0.75rem 0.9rem;
+    overflow-x: auto;
+    font-size: 0.875em;
+    line-height: 1.5;
+}
+
+.sd-bubble pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    font-size: 1em;
+}
+
+.sd-bubble blockquote {
+    border-left: 3px solid var(--border);
+    padding-left: 0.9em;
+    color: var(--muted-foreground);
+}
+
+.sd-bubble a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.sd-bubble table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.sd-bubble th,
+.sd-bubble td {
+    border: 1px solid var(--border);
+    padding: 0.35em 0.6em;
+    text-align: left;
+}
+
+.sd-bubble th {
+    background: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.sd-bubble hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 0.6em 0;
+}

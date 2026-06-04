@@ -1,0 +1,104 @@
+// Flat ESLint config — SAST-focused static analysis.
+// See CLAUDE.md › "Linting & SAST" for the rationale.
+//
+// Severity policy (project decision):
+//   • SECURITY rules → "error"  — block commits (lint-staged on staged files).
+//   • everything else (typescript-eslint base, sonarjs smells) → "warn"
+//     — surfaced by `pnpm lint`, never blocks a commit.
+//
+// Non-type-checked on purpose: keeps `pnpm lint` and the pre-commit hook
+// fast and avoids "file not in project" errors for out-of-tsconfig files
+// (scripts/, eslint.config.js, tools/). Type-aware rules stay off.
+import tseslint from 'typescript-eslint';
+import sonarjs from 'eslint-plugin-sonarjs';
+import nounsanitized from 'eslint-plugin-no-unsanitized';
+import noSecrets from 'eslint-plugin-no-secrets';
+import solid from 'eslint-plugin-solid';
+
+/**
+ * Downgrade every *enabled* rule in a flat-config `rules` map to "warn",
+ * preserving each rule's options. Leaves "off" rules off.
+ */
+function toWarn(rules = {}) {
+    const out = {};
+    for (const [id, val] of Object.entries(rules)) {
+        if (Array.isArray(val)) {
+            const [sev, ...opts] = val;
+            out[id] = sev === 'off' || sev === 0 ? val : ['warn', ...opts];
+        } else {
+            out[id] = val === 'error' || val === 2 ? 'warn' : val;
+        }
+    }
+    return out;
+}
+
+const TARGETS = ['**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}'];
+
+export default tseslint.config(
+    {
+        // Build artifacts, vendored submodules, and generated assets.
+        ignores: ['dist/**', 'build/**', 'public/**', 'wasm/**', 'contrib/**', 'coverage/**'],
+    },
+
+    // ── typescript-eslint recommended → warn (code quality, non-blocking) ──
+    ...tseslint.configs.recommended.map((c) => (c.rules ? { ...c, rules: toWarn(c.rules) } : c)),
+
+    // ── sonarjs recommended → warn (bugs + smells, non-blocking) ──
+    {
+        name: 'sonarjs/recommended (warn)',
+        files: TARGETS,
+        plugins: { sonarjs },
+        rules: toWarn(sonarjs.configs.recommended.rules),
+    },
+
+    // ── SAST: DOM-XSS + in-code secrets → error (blocks commits) ──
+    {
+        name: 'sast/security (error)',
+        files: TARGETS,
+        plugins: {
+            'no-unsanitized': nounsanitized,
+            'no-secrets': noSecrets,
+            solid,
+        },
+        rules: {
+            // Mozilla's DOM-XSS guard: the DOM API `el.innerHTML = …` /
+            // insertAdjacentHTML / document.write with non-literal input.
+            'no-unsanitized/property': 'error',
+            'no-unsanitized/method': 'error',
+            // Solid's #1 XSS vector — the JSX `innerHTML={…}` prop — which
+            // no-unsanitized cannot see (it's a prop, not a DOM assignment).
+            // Only this one rule from eslint-plugin-solid is enabled; the
+            // reactivity-correctness rules are intentionally left off.
+            'solid/no-innerhtml': 'error',
+            // Entropy-based secret detection (complements scripts/scan-secrets.ts).
+            // 4.5 clears XML/CSS-fragment false positives; base64-style tokens
+            // (and JWTs) sit well above it.
+            'no-secrets/no-secrets': ['error', { tolerance: 4.5 }],
+        },
+    },
+
+    // ── per-file carve-outs ──
+    {
+        // The secret-scanner test deliberately assembles fake high-entropy
+        // tokens as fixtures; entropy detection would flag them.
+        name: 'sast/allow-test-fixtures',
+        files: ['scripts/scan-secrets.test.ts'],
+        rules: { 'no-secrets/no-secrets': 'off' },
+    },
+    {
+        // Dev-only build tooling and test files aren't shipped, so their
+        // sonarjs security *hotspots* are noise: `new Function` in a test that
+        // exercises the (real, sandboxed) executor, `git`/`claude` spawned
+        // from PATH in build scripts, and regexes over trusted local input.
+        // The actual code-quality rules still apply; only the hotspots are off.
+        name: 'sast/relax-hotspots-in-dev-and-tests',
+        files: ['scripts/**', '**/*.test.ts', '**/*.test.tsx'],
+        rules: {
+            'sonarjs/code-eval': 'off',
+            'sonarjs/no-os-command-from-path': 'off',
+            'sonarjs/slow-regex': 'off',
+            'sonarjs/regex-complexity': 'off',
+            'sonarjs/no-hardcoded-ip': 'off',
+        },
+    },
+);

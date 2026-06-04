@@ -1,0 +1,89 @@
+{
+    "name": "analyst",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc -b && vite build",
+        "preview": "vite preview",
+        "test": "vitest run",
+        "test:integration": "vitest run --config vitest.integration.config.ts",
+        "sandbox:bundle": "node tools/bundle-sandbox-libs.mjs",
+        "scan:secrets": "node --experimental-strip-types --no-warnings scripts/scan-secrets.ts",
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix",
+        "prepare": "husky"
+    },
+    "lint-staged": {
+        "*.{js,jsx,mjs,cjs,ts,tsx}": [
+            "eslint --no-warn-ignored",
+            "prettier --write"
+        ]
+    },
+    "dependencies": {
+        "@ai-sdk/google": "3.0.80",
+        "@ai-sdk/openai-compatible": "2.0.48",
+        "@ai-sdk/provider": "^3.0.10",
+        "@bjorn3/browser_wasi_shim": "^0.4.2",
+        "@corvu/resizable": "^0.2.5",
+        "@huggingface/transformers": "^4.2.0",
+        "@kobalte/core": "^0.13.11",
+        "@openrouter/ai-sdk-provider": "^2.9.0",
+        "@solidjs/router": "^0.16.1",
+        "@types/papaparse": "^5.5.2",
+        "ag-grid-community": "^35.3.0",
+        "ai": "^6.0.191",
+        "class-variance-authority": "^0.7.1",
+        "clsx": "^2.1.1",
+        "comlink": "^4.4.2",
+        "cva": "1.0.0-beta.4",
+        "dompurify": "^3.4.8",
+        "echarts": "^6.1.0",
+        "idb": "^8.0.3",
+        "js-cookie": "^3.0.8",
+        "jsdom": "^29.1.1",
+        "jsonrepair": "^3.14.0",
+        "papaparse": "^5.5.3",
+        "remark-gfm": "^4.0.1",
+        "solid-js": "^1.9.12",
+        "solid-markdown": "^2.1.1",
+        "solid-motionone": "^1.0.4",
+        "tailwind-merge": "^3.6.0",
+        "tailwindcss-animate": "^1.0.7",
+        "ts-blank-space": "^0.9.0",
+        "wa-sqlite": "link:./contrib/wa-sqlite",
+        "xlsx": "link:./contrib/sheetjs",
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "@babel/core": "^7.29.7",
+        "@tailwindcss/vite": "^4.3.0",
+        "@types/babel__core": "^7.20.5",
+        "@types/dom-chromium-ai": "^0.0.16",
+        "@types/node": "^24.12.3",
+        "@vitest/web-worker": "^4.1.7",
+        "esbuild": "^0.28.0",
+        "eslint": "^10.4.1",
+        "eslint-plugin-no-secrets": "^2.3.3",
+        "eslint-plugin-no-unsanitized": "^4.1.5",
+        "eslint-plugin-solid": "^0.14.5",
+        "eslint-plugin-sonarjs": "^4.0.3",
+        "husky": "^9.1.7",
+        "lint-staged": "^17.0.7",
+        "prettier": "^3.8.3",
+        "tailwindcss": "^4.3.0",
+        "typescript": "~6.0.2",
+        "typescript-eslint": "^8.60.1",
+        "vite": "^8.0.12",
+        "vite-plugin-solid": "^2.11.12",
+        "vitest": "^4.1.7"
+    },
+    "pnpm": {
+        "peerDependencyRules": {
+            "allowedVersions": {
+                "eslint-plugin-solid>eslint": "10"
+            }
+        }
+    }
+}

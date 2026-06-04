@@ -1,0 +1,9 @@
+# Fail the commit if any step below exits non-zero (without this, only the
+# last command's status would gate the commit).
+set -e
+
+pnpm exec lint-staged
+
+# Block commits that introduce secrets (API keys, tokens, private keys,
+# emails, user ids). Scans the staged index content; see scripts/scan-secrets.ts.
+node --experimental-strip-types --no-warnings scripts/scan-secrets.ts --staged
