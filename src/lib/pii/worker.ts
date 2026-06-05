@@ -13,7 +13,7 @@ import { analyzeRegex } from './regex';
 declare const self: SharedWorkerGlobalScope;
 
 // Host-side path for the deploy/ tree produced by wasm/tiny-pii/build.py.
-const ASSET_BASE = '/tiny-pii/';
+const ASSET_BASE = '/' + APP_VERSION + '/tiny-pii';
 
 /**
  * Manifest written by `wasm/tiny-pii/build.py`. It's the single source
@@ -74,8 +74,6 @@ export interface AnalyzeStats {
     regexMs?: number;
     /** Number of regex spans (post overlap-resolution within regex). */
     regexSpanCount?: number;
-    /** True when the input exceeded the regex scan cap and only its prefix was scanned. */
-    truncated?: boolean;
 }
 
 export interface AnalyzeOptions {
@@ -94,9 +92,10 @@ export class PiiAccessor {
     #readyAt = 0;
 
     async #boot(): Promise<TokenClassificationPipeline> {
+        debugger;
         this.#bootStartedAt = Date.now();
         // NOTE: keep this as a root-relative path, NOT a full URL.
-        env.localModelPath = ASSET_BASE;
+        env.localModelPath = ASSET_BASE + '/';
         env.allowLocalModels = true;
         env.allowRemoteModels = false;
         // onnxruntime-web fetches its `ort-*.wasm` from a CDN by default.
@@ -106,10 +105,7 @@ export class PiiAccessor {
         // adjustment.
         const ortBackend = env.backends.onnx;
         if (ortBackend.wasm && typeof self !== 'undefined' && 'location' in self) {
-            ortBackend.wasm.wasmPaths = new URL(
-                'ort/',
-                self.location.origin + ASSET_BASE,
-            ).toString();
+            ortBackend.wasm.wasmPaths = ASSET_BASE + '/ort/';
         }
 
         const manifest = await this.getManifest();
@@ -152,16 +148,22 @@ export class PiiAccessor {
     }
 
     async #fetchManifest(): Promise<PiiManifest> {
-        const res = await fetch(`${ASSET_BASE}manifest.json`, { cache: 'no-store' });
+        const res = await fetch(`${ASSET_BASE}/manifest.json`, { cache: 'no-store' });
         if (!res.ok) {
             // Clear the cached failure so subsequent calls retry.
             this.#manifest = null;
             throw new Error(
-                `tiny-pii manifest missing at ${ASSET_BASE}manifest.json — ` +
-                    `did the build run? (HTTP ${res.status})`,
+                `tiny-pii manifest missing at ${ASSET_BASE}/manifest.json (HTTP ${res.status})`,
             );
         }
-        return (await res.json()) as PiiManifest;
+        try {
+            return (await res.json()) as PiiManifest;
+        } catch (e) {
+            throw new Error(
+                `tiny-pii manifest is not a valid json at ${ASSET_BASE}/manifest.json (HTTP ${res.status})`,
+                { cause: e },
+            );
+        }
     }
 
     #get(): Promise<TokenClassificationPipeline> {
@@ -238,7 +240,7 @@ export class PiiAccessor {
      *
      * Why we don't just use `aggregation_strategy: 'simple'`: that path
      * in transformers.js returns `{ entity_group, score, word }` only —
-     * no start/end char offsets (there's a literal `// TODO: Add support
+     * no start/end char offsets (there's a literal `todo: Add support
      * for start and end` in their source). The highlighter overlay
      * needs offsets, so we run with `aggregation_strategy: 'none'`,
      * then walk the original text matching each subword to recover

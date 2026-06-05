@@ -22,12 +22,12 @@ shadcn-solid-update:
 	@echo "shadcn-solid bumped to $$(git -C contrib/shadcn-solid describe --tags --always). Review and commit the pointer."
 
 # Build public/qjs.wasm via wasi-sdk (downloaded on first run into build/).
-wasm:
+qjs:
 	cmake -S . -B build
 	cmake --build build --target qjs-wasm
 
-wasm-clean:
-	rm -rf build public/qjs.wasm
+qjs-clean:
+	rm -rf build src/assets/qjs.wasm
 
 # Build public/wa-sqlite.wasm via wasi-sdk. Patches contrib/wa-sqlite/src
 # in place (see wasm/wa-sqlite/patches/0001-wasi-sdk-build.patch) and
@@ -37,7 +37,7 @@ wa-sqlite:
 	cmake --build build --target wa-sqlite
 
 wa-sqlite-clean:
-	rm -f public/wa-sqlite.wasm build/wa-sqlite-patch.stamp
+	rm -f src/assets/wa-sqlite.wasm build/wa-sqlite-patch.stamp
 
 # Escape hatch: throw away the in-place patch and return contrib/wa-sqlite
 # to vanilla v1.1.1. Useful before regenerating the patch.
@@ -53,7 +53,7 @@ tiny-pii:
 
 tiny-pii-clean:
 	cmake --build build --target tiny-pii-clean 2>/dev/null || \
-	  rm -rf wasm/tiny-pii/build wasm/tiny-pii/.venv
+	  rm -rf wasm/tiny-pii/build wasm/tiny-pii/export wasm/tiny-pii/.venv src/assets/tiny-pii/*
 
 # Apply patches/sheetjs-styles.patch (adds opts.xlsxCss hooks + fixes
 # get_cell_style dedup) and rebuild contrib/sheetjs/xlsx.mjs. Idempotent —

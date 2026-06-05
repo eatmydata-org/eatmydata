@@ -22,6 +22,8 @@ export type CreateDemoOptions = {
     signal?: AbortSignal;
 };
 
+const ASSET_BASE = '/' + APP_VERSION + '/demo';
+
 /**
  * Download a pre-built demo .sqlite from `/demo/<spec>.sqlite`, drop it
  * straight into the OPFS SAH pool, register a DataSource row pointing at
@@ -63,7 +65,7 @@ export async function createDemoSource(
 
     // 1. Download with progress reporting (streamed if the server cooperates).
     const bytes = await fetchWithProgress(
-        `/demo/${spec}.sqlite`,
+        `${ASSET_BASE}/${spec}.sqlite`,
         opts.onProgress,
         opts.signal,
         about.fileSizeBytesApprox,

@@ -12,7 +12,7 @@ import type { AgentControls } from '@/lib/agent/loop';
 import type { ConfirmationResponse } from '@/lib/agent/confirmation';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const NORTHWIND_PATH = resolve(__dirname, '../../../../public/demo/northwind.sqlite');
+const NORTHWIND_PATH = resolve(__dirname, '../../../../src/assets/demo/northwind.sqlite');
 
 /**
  * Load the Northwind SQLite fixture into an in-process `:memory:` engine.

@@ -18,7 +18,7 @@ import { beforeAll } from 'vitest';
 import { setWasmLoader } from '@/libs/qjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const qjsWasmPath = resolve(__dirname, '../../../../public/qjs.wasm');
+const qjsWasmPath = resolve(__dirname, '../../../assets/qjs.wasm');
 const settingsTypesPath = resolve(__dirname, '../../runtime/state/settings-types.ts');
 
 /**

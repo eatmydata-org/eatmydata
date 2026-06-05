@@ -1,12 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Builds the project's WASM artifacts:
-#   - target qjs-wasm: contrib/quickjs compiled to public/qjs.wasm via
-#     wasi-sdk (downloaded automatically). Always built.
-#   - target tiny-pii: a HF token-classification PII model converted to
-#     ONNX for transformers.js (model_id pinned in wasm/tiny-pii/build.py).
-#     Lands in wasm/tiny-pii/build/deploy/. Opt-in (not ALL); invoke
-#     with `cmake --build build --target tiny-pii`.
 project(analyst_wasm LANGUAGES NONE)
 
 include(ExternalProject)
@@ -71,7 +64,7 @@ set(QJS_SOURCES
     ${CMAKE_SOURCE_DIR}/wasm/wrapper.c
 )
 
-set(QJS_WASM_OUT ${CMAKE_SOURCE_DIR}/public/qjs.wasm)
+set(QJS_WASM_OUT ${CMAKE_SOURCE_DIR}/src/assets/wasm/qjs.wasm)
 
 add_custom_command(
     OUTPUT ${QJS_WASM_OUT}
@@ -104,7 +97,7 @@ add_dependencies(qjs-wasm wasi-sdk)
 
 # ---------------------------------------------------------------------------
 # wa-sqlite: rhashimoto/wa-sqlite v1.1.1 compiled from source via wasi-sdk
-# instead of Emscripten. Produces public/wa-sqlite.wasm + companion runtime
+# instead of Emscripten. Produces wa-sqlite.wasm + companion runtime
 # in src/lib/wa-sqlite/runtime.ts.
 #
 # Why our own build:
@@ -126,7 +119,7 @@ add_dependencies(qjs-wasm wasi-sdk)
 
 set(WASQL_DIR ${CMAKE_SOURCE_DIR}/contrib/wa-sqlite)
 set(WASQL_PATCH ${CMAKE_SOURCE_DIR}/wasm/wa-sqlite/patches/0001-wasi-sdk-build.patch)
-set(WASQL_WASM_OUT ${CMAKE_SOURCE_DIR}/public/wa-sqlite.wasm)
+set(WASQL_WASM_OUT ${CMAKE_SOURCE_DIR}/src/assets/wasm/wa-sqlite.wasm)
 
 # SQLite amalgamation. URL pattern is www.sqlite.org/YYYY/sqlite-amalgamation-<MMmmpppp>.zip
 # where MMmmpppp is the version (3.53.1 = 3530100). Keep this loosely in

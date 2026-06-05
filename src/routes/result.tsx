@@ -1,4 +1,4 @@
-import { Match, Show, Switch, type Component } from 'solid-js';
+import { Match, Switch, type Component } from 'solid-js';
 import { useParams } from '@solidjs/router';
 import { getResult, isResultLoading } from '@/lib/runtime/client';
 import { ActionResultView } from '@/components/action-result-view';
@@ -54,11 +54,6 @@ const LoadingIndicator: Component = () => (
 
 function formatGeneratedAt(ts: number): string {
     return new Date(ts).toLocaleString();
-}
-
-function durationMs(ms: number): string {
-    if (ms < 1000) return `${ms} ms`;
-    return `${(ms / 1000).toFixed(2)} s`;
 }
 
 export default ResultPage;

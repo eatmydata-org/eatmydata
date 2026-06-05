@@ -27,14 +27,9 @@ const decoder = new TextDecoder();
  * production asset URL; tests inject a bytes loader (fs.readFile) so they can
  * run the real QuickJS in Node without an HTTP server.
  */
-export type WasmLoader = () =>
-    | Promise<Response>
-    | Response
-    | BufferSource
-    | Promise<BufferSource>;
+export type WasmLoader = () => Promise<Response> | Response | BufferSource | Promise<BufferSource>;
 
-let wasmLoader: WasmLoader = () =>
-    fetch(new URL('/qjs.wasm', import.meta.url));
+let wasmLoader: WasmLoader = () => fetch(new URL('@/assets/wasm/qjs.wasm', import.meta.url));
 
 /** Override the WASM source. MUST be called before `initQJS`. */
 export function setWasmLoader(loader: WasmLoader): void {
@@ -58,13 +53,9 @@ async function doInit(): Promise<void> {
     if (
         source instanceof Uint8Array ||
         source instanceof ArrayBuffer ||
-        (typeof SharedArrayBuffer !== 'undefined' &&
-            source instanceof SharedArrayBuffer)
+        (typeof SharedArrayBuffer !== 'undefined' && source instanceof SharedArrayBuffer)
     ) {
-        const result = await WebAssembly.instantiate(
-            source as BufferSource,
-            importObject,
-        );
+        const result = await WebAssembly.instantiate(source as BufferSource, importObject);
         inst = result.instance;
     } else {
         const { instance } = await WebAssembly.instantiateStreaming(
@@ -98,7 +89,7 @@ export function initQJS(): Promise<void> {
 export function _resetQJSForTesting(): void {
     exports = null;
     initPromise = null;
-    wasmLoader = () => fetch(new URL('/qjs.wasm', import.meta.url));
+    wasmLoader = () => fetch(new URL('@/assets/wasm/qjs.wasm', import.meta.url));
 }
 
 function writeBytes(s: string): { ptr: number; len: number } {

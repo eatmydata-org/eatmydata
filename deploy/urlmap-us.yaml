@@ -1,0 +1,40 @@
+defaultService: https://www.googleapis.com/compute/v1/projects/routinghub-dev/global/backendBuckets/eatmydata-us
+
+hostRules:
+    - hosts:
+          - '*'
+      pathMatcher: path-matcher-1
+
+pathMatchers:
+    - name: path-matcher-1
+      defaultService: https://www.googleapis.com/compute/v1/projects/routinghub-dev/global/backendBuckets/eatmydata-us
+
+      routeRules:
+          - priority: 1
+            matchRules:
+                - pathTemplateMatch: /
+                - pathTemplateMatch: /chat
+                - pathTemplateMatch: /chat/**
+                - pathTemplateMatch: /result
+                - pathTemplateMatch: /result/**
+                - pathTemplateMatch: /sql
+                - pathTemplateMatch: /sql/**
+                - pathTemplateMatch: /pii
+                - pathTemplateMatch: /pii/**
+                - pathTemplateMatch: /qjs
+                - pathTemplateMatch: /qjs/**
+                - pathTemplateMatch: /settings
+                - pathTemplateMatch: /settings/**
+                - pathTemplateMatch: /xlsx
+                - pathTemplateMatch: /xlsx/**
+                - pathTemplateMatch: /data-sources
+                - pathTemplateMatch: /data-sources/**
+                - pathTemplateMatch: /tests
+                - pathTemplateMatch: /tests/**
+                - pathTemplateMatch: /wa-sqlite
+                - pathTemplateMatch: /wa-sqlite/**
+
+            service: https://www.googleapis.com/compute/v1/projects/routinghub-dev/global/backendBuckets/eatmydata-us
+            routeAction:
+                urlRewrite:
+                    pathTemplateRewrite: /index.html

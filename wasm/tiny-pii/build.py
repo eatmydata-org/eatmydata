@@ -35,7 +35,7 @@ from transformers import AutoConfig
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent.parent
 BUILD = ROOT / "build"
-DEPLOY = BUILD / "deploy"
+DEPLOY = REPO_ROOT / "src" / "assets" / "tiny-pii"
 EXPORT_TMP = BUILD / "export"
 
 # The model to export. Override by editing this constant — the rest of
@@ -114,7 +114,8 @@ def pick_export_dtype() -> str:
     # transformers 5.x stores this under `dtype`; older 4.x under
     # `torch_dtype`. The field may be a torch.dtype object or a string;
     # str() handles both.
-    raw = getattr(config, "dtype", None) or getattr(config, "torch_dtype", None)
+    raw = getattr(config, "dtype", None) or getattr(
+        config, "torch_dtype", None)
     norm = str(raw).lower().replace("torch.", "")
     if norm in {"bfloat16", "bf16", "float16", "fp16", "half"}:
         return "fp16"
@@ -228,7 +229,8 @@ def assemble_model_dir(dtype: str) -> None:
         print(f"-- downcasting {src_onnx.name} fp32 -> fp16 -> {dst.name}")
         downcast_to_fp16(src_onnx, dst)
     elif dtype == "q8":
-        print(f"-- quantizing {src_onnx.name} fp32 -> int8 (QUInt8) -> {dst.name}")
+        print(
+            f"-- quantizing {src_onnx.name} fp32 -> int8 (QUInt8) -> {dst.name}")
         quantize_to_q8(src_onnx, dst)
     else:
         shutil.copy2(src_onnx, dst)
@@ -333,7 +335,8 @@ def main() -> None:
         print(f"-- export dtype: {dtype} (auto)")
     else:
         dtype = EXPORT_DTYPE_OVERRIDE
-        print(f"-- export dtype: {dtype} (forced; auto would have picked {auto})")
+        print(
+            f"-- export dtype: {dtype} (forced; auto would have picked {auto})")
     export_onnx()
     assemble_model_dir(dtype)
     copy_ort_to_deploy()

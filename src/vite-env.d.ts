@@ -5,6 +5,8 @@ interface ImportMetaEnv {
     readonly VITE_DEV_OPENROUTER_KEY?: string;
     /** Dev-only Google AI Studio key, from `.env.local`. Empty in prod / when unset. */
     readonly VITE_DEV_GOOGLE_AI_STUDIO_KEY?: string;
+    /** App release version */
+    readonly APP_VERSION: string;
 }
 
 interface ImportMeta {
@@ -19,3 +21,9 @@ declare module 'virtual:worker-versions' {
     /// to bust a stale instance on dev rebuilds.
     export const workerVersions: Record<string, string>;
 }
+
+declare global {
+    const APP_VERSION: string;
+}
+
+export {};

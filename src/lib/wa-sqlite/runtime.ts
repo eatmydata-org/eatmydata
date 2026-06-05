@@ -22,7 +22,7 @@
  *    them through the same sync path because OPFSCoopSyncVFS is all sync.
  */
 
-const WASM_URL = new URL('/wa-sqlite.wasm', import.meta.url);
+const WASM_URL = new URL('@/assets/wasm/wa-sqlite.wasm', import.meta.url);
 
 interface FactoryOptions {
     wasmBinary?: ArrayBuffer | Uint8Array;
@@ -141,7 +141,7 @@ async function fetchWasm(): Promise<ArrayBuffer> {
         // module's location — fileURLToPath gives us a disk path. In
         // production we resolve via vite's static asset map so this branch
         // is dev/test-only.
-        const path = fileURLToPath(new URL('../../../public/wa-sqlite.wasm', import.meta.url));
+        const path = fileURLToPath(new URL('@/assets/wasm/wa-sqlite.wasm', import.meta.url));
         const bytes = await readFile(path);
         return bytes.buffer.slice(
             bytes.byteOffset,
