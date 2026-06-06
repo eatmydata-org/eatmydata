@@ -1,0 +1,52 @@
+{
+    "_comment": "Stable provider/model catalog for unit tests ONLY. vitest aliases @app-config here (see vitest.config.ts) so tests don't depend on the app's mutable src/assets/config/*.json. Keep openrouter + google + chrome-ai all enabled.",
+    "defaultModelId": "openrouter:openai/gpt-oss-120b:free",
+    "providers": [
+        {
+            "id": "openrouter",
+            "kind": "openrouter",
+            "label": "OpenRouter",
+            "enabled": true,
+            "models": [
+                {
+                    "modelId": "openai/gpt-oss-120b:free",
+                    "label": "GPT-OSS 120B (free)",
+                    "pricing": { "prompt": 0, "completion": 0 }
+                },
+                {
+                    "modelId": "nvidia/nemotron-3-super-120b-a12b:free",
+                    "label": "Nemotron 3 Super 120B A12B (free)",
+                    "pricing": { "prompt": 0, "completion": 0 }
+                },
+                {
+                    "modelId": "google/gemini-2.5-flash-lite",
+                    "label": "Gemini 2.5 Flash Lite ($)",
+                    "pricing": { "prompt": 0, "completion": 0 }
+                }
+            ]
+        },
+        {
+            "id": "google",
+            "kind": "google-ai-studio",
+            "label": "Google AI Studio",
+            "enabled": true,
+            "models": [
+                { "modelId": "gemini-2.5-flash", "label": "Gemini 2.5 Flash" },
+                { "modelId": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite" }
+            ]
+        },
+        {
+            "id": "chrome-ai",
+            "kind": "chrome-ai",
+            "label": "Chrome AI (on-device)",
+            "enabled": true,
+            "models": [
+                {
+                    "modelId": "gemini-nano",
+                    "label": "Chrome AI (Gemini Nano)",
+                    "pricing": { "prompt": 0, "completion": 0 }
+                }
+            ]
+        }
+    ]
+}

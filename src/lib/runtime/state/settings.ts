@@ -73,7 +73,15 @@ export function patchSettings(patch: Partial<Settings>): void {
     // every value `mergeWithDefaults` carries forward — to a plain graph.
     const plain = JSON.parse(JSON.stringify(patch)) as Partial<Settings>;
     settings = mergeWithDefaults({ ...settings, ...plain });
-    publish({ kind: 'settings-patch', patch: plain });
+    // `providers` is derived (the @app-config catalog + persisted keys), so a
+    // patch that touches keys — or carries a providers/pricing change — must
+    // hand peer mirrors the freshly-merged `providers` (+ `apiKeys`); they don't
+    // re-derive. Other patches broadcast verbatim.
+    const touchesProviders = 'apiKeys' in plain || 'providers' in plain;
+    const broadcastPatch: Partial<Settings> = touchesProviders
+        ? { ...plain, apiKeys: settings.apiKeys, providers: settings.providers }
+        : plain;
+    publish({ kind: 'settings-patch', patch: broadcastPatch });
     void persist(settings);
 }
 
@@ -86,7 +94,13 @@ export function resetSettings(): void {
 async function persist(s: Settings): Promise<void> {
     try {
         const db = await openSettingsDb();
-        await db.put(STORE, s, KEY);
+        // The provider/model catalog is build-time config (@app-config), never
+        // user state — persist everything EXCEPT the derived `providers`. Only
+        // `apiKeys` carries provider-related state into IDB; on load
+        // `mergeWithDefaults` rebuilds `providers` from the catalog + keys.
+        const { providers: _omitProviders, ...persistable } = s;
+        void _omitProviders;
+        await db.put(STORE, persistable, KEY);
     } catch (e) {
         // Quota exceeded / private-browsing / disabled storage / etc.
         // Don't swallow — settings will silently revert on refresh

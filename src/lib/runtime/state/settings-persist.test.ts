@@ -51,8 +51,7 @@ describe('patchSettings with Solid-store-proxy patches', () => {
         const [mirror] = createStore<Settings>(defaultSettings());
         const googleModelId = mirror.providers.find((p) => p.kind === 'google-ai-studio')!
             .models[0]!.id;
-        patchSettings({ useOneModelForAll: false, agentModels: { coder: googleModelId } });
-        expect(getSettings().useOneModelForAll).toBe(false);
+        patchSettings({ agentModels: { coder: googleModelId } });
         expect(getSettings().agentModels.coder).toBe(googleModelId);
     });
 });

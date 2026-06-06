@@ -6,7 +6,14 @@ import { Logo } from '@/components/brand';
 import { DemoDialog } from '@/components/data-sources/demo-dialog';
 import { createSourceFromFile } from '@/lib/data-sources/create-from-file';
 import { useSettings } from '@/lib/runtime/client';
-import { hasUsableProvider } from '@/lib/runtime/state/settings-types';
+import {
+    AGENT_MODEL_KEYS,
+    findModelEntryIn,
+    hasUsableProvider,
+    resolveAgentModel,
+} from '@/lib/runtime/state/settings-types';
+import { agentLabel } from '@/lib/agent/labels';
+import { beginOpenRouterOAuth } from '@/lib/agent/providers/openrouter-oauth';
 import type { DataSource } from '@/lib/data-sources/types';
 import type { DemoFamily } from '@/lib/data-sources/about';
 
@@ -30,6 +37,19 @@ const Landing: Component = () => {
     const settings = useSettings();
     const configured = () => hasUsableProvider(settings.providers);
 
+    // The model each agent runs on by default, resolved from the build-time
+    // `@app-config` catalog (today every agent falls back to its single
+    // `defaultModelId`). Shown read-only on the landing page so users know what
+    // they're authorizing OpenRouter to run; editable per-agent in Settings.
+    const agentDefaults = () =>
+        AGENT_MODEL_KEYS.map((key) => ({
+            agent: agentLabel(key),
+            model: findModelEntryIn(
+                settings.providers,
+                resolveAgentModel(settings.providers, settings.agentModels, key),
+            ).label,
+        }));
+
     // Demo dialog, opened pre-selected from a pill.
     const [demoOpen, setDemoOpen] = createSignal(false);
     const [demoFamily, setDemoFamily] = createSignal<DemoFamily>('retail');
@@ -39,6 +59,31 @@ const Landing: Component = () => {
     };
     const handleDemoCreated = (_src: DataSource) => {
         navigate('/chat');
+    };
+
+    // "Authorize OpenRouter" — same OAuth round-trip as Settings. The flow's
+    // callback URL is always `${origin}/settings`, so OpenRouter redirects the
+    // user back to Settings, where `onMount` exchanges the code for a key.
+    // `beginOpenRouterOAuth` navigates away (replacing this page), so it only
+    // returns here if the redirect setup itself fails.
+    const [authorizing, setAuthorizing] = createSignal(false);
+    const authorizeOpenRouter = async () => {
+        if (authorizing()) return;
+        const provider = settings.providers.find((p) => p.kind === 'openrouter' && p.enabled);
+        if (!provider) {
+            // No OpenRouter provider in this build's catalog — fall back to the
+            // Settings page rather than starting a flow with no target.
+            navigate('/settings');
+            return;
+        }
+        setAuthorizing(true);
+        try {
+            await beginOpenRouterOAuth(provider.id);
+        } catch (e) {
+            console.error('[landing] OpenRouter OAuth start failed', e);
+            setAuthorizing(false);
+            navigate('/settings');
+        }
     };
 
     // Drag-drop / browse import of a single Excel or CSV file.
@@ -89,8 +134,12 @@ const Landing: Component = () => {
                             Fully open-source and open for self-host.
                         </p>
                         <div class="flex flex-wrap items-center justify-center gap-2 mt-2">
-                            <Button size="lg" onClick={() => openDemo('retail')}>
-                                Try a demo database
+                            <Button
+                                size="lg"
+                                onClick={() => void authorizeOpenRouter()}
+                                disabled={authorizing()}
+                            >
+                                {authorizing() ? 'Authorizing…' : 'Authorize OpenRouter'}
                             </Button>
                             <Button size="lg" variant="outline" as={A} href="/chat">
                                 Open the chat
@@ -151,60 +200,42 @@ const Landing: Component = () => {
                                 n={1}
                                 title="Set up your AI provider"
                                 aside={
-                                    <Show
-                                        when={configured()}
-                                        fallback={
-                                            <Button as={A} href="/settings" variant="default">
-                                                Open Settings
-                                            </Button>
-                                        }
-                                    >
+                                    <Show when={configured()}>
                                         <span class="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                                            <CheckIcon /> API key connected
+                                            <CheckIcon /> Connected
                                         </span>
                                     </Show>
                                 }
                             >
-                                <p>
-                                    We support{' '}
-                                    <ExtLink href="https://openrouter.ai">OpenRouter</ExtLink> for
-                                    now. We recommend trying the free OpenAI model there —{' '}
-                                    <span class="font-medium text-foreground">
-                                        GPT-OSS-120B (free)
-                                    </span>
-                                    .
-                                </p>
-                                <ol class="mt-2 flex flex-col gap-1.5 text-sm text-muted-foreground list-decimal pl-5">
-                                    <li>
-                                        Create a free account at{' '}
-                                        <ExtLink href="https://openrouter.ai">
-                                            openrouter.ai
-                                        </ExtLink>
-                                        .
-                                    </li>
-                                    <li>
-                                        Generate a key at{' '}
-                                        <ExtLink href="https://openrouter.ai/keys">
-                                            openrouter.ai/keys
-                                        </ExtLink>
-                                        .
-                                    </li>
-                                    <li>
-                                        Paste it into{' '}
-                                        <A
-                                            href="/settings"
-                                            class="underline underline-offset-2 hover:text-foreground"
-                                        >
-                                            Settings → Provider
-                                        </A>
-                                        .
-                                    </li>
-                                </ol>
+                                <p>Connect your OpenRouter account:</p>
+                                <div class="mt-2">
+                                    <Button
+                                        variant="default"
+                                        onClick={() => void authorizeOpenRouter()}
+                                        disabled={authorizing()}
+                                    >
+                                        {authorizing() ? 'Authorizing…' : 'Authorize OpenRouter'}
+                                    </Button>
+                                </div>
                                 <p class="mt-2 text-xs text-muted-foreground">
-                                    🔒 Your API key is stored locally in your browser and is never
-                                    uploaded to any cloud — it's sent only to OpenRouter when you
-                                    ask a question.
+                                    Your key is stored only in this browser and is sent to
+                                    OpenRouter, when you ask a question.
                                 </p>
+                                <p class="mt-3">Default models:</p>
+                                <ul class="mt-1.5 flex flex-col gap-1 text-sm">
+                                    <For each={agentDefaults()}>
+                                        {(d) => (
+                                            <li class="flex items-baseline gap-2">
+                                                <span class="font-medium text-foreground">
+                                                    {d.agent}
+                                                </span>
+                                                <span class="text-muted-foreground">
+                                                    — {d.model}
+                                                </span>
+                                            </li>
+                                        )}
+                                    </For>
+                                </ul>
                             </Step>
 
                             {/* Step 2 — demo */}

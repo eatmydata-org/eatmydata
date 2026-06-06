@@ -1,4 +1,4 @@
-import { createMemo, type Component } from 'solid-js';
+import { createMemo, Show, type Component } from 'solid-js';
 import {
     Select,
     SelectContent,
@@ -17,6 +17,36 @@ type Props = {
     onChange: (id: string) => void;
     disabled?: boolean;
     triggerClass?: string;
+};
+
+/**
+ * "free" / "paid" pill for a model. Free = pricing known and both per-token
+ * rates are zero (so on-device chrome-ai and OpenRouter `:free` slugs read
+ * "free"); paid = pricing known and non-zero. When pricing is unknown (e.g. a
+ * Google model before "Download prices") no pill is shown. Read inside JSX so
+ * Solid tracks the underlying pricing store path.
+ */
+const TierBadge: Component<{ fqid: string }> = (props) => {
+    const tier = (): 'free' | 'paid' | undefined => {
+        const p = findModelEntry(props.fqid).pricing;
+        if (!p) return undefined;
+        return p.prompt === 0 && p.completion === 0 ? 'free' : 'paid';
+    };
+    return (
+        <Show when={tier()}>
+            {(t) => (
+                <span
+                    class={`ml-1.5 rounded px-1 py-0.5 text-[9px] uppercase font-medium align-middle ${
+                        t() === 'free'
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-muted text-muted-foreground'
+                    }`}
+                >
+                    {t()}
+                </span>
+            )}
+        </Show>
+    );
 };
 
 export const ModelSelector: Component<Props> = (props) => {
@@ -72,6 +102,7 @@ export const ModelSelector: Component<Props> = (props) => {
                                 {providerLabel(itemProps.item.rawValue)} ·{' '}
                             </span>
                             {findModelEntry(itemProps.item.rawValue).label}
+                            <TierBadge fqid={itemProps.item.rawValue} />
                         </span>
                         <span class="text-[10px] text-muted-foreground tabular-nums">
                             {formatPricingLine(findModelEntry(itemProps.item.rawValue).pricing)}
@@ -88,6 +119,7 @@ export const ModelSelector: Component<Props> = (props) => {
                                 {providerLabel(state.selectedOption())} ·{' '}
                             </span>
                             {findModelEntry(state.selectedOption()).label}
+                            <TierBadge fqid={state.selectedOption()} />
                         </span>
                     )}
                 </SelectValue>

@@ -5,7 +5,10 @@
  *
  * No Solid / agent / SDK imports here — this module is a pure leaf so
  * both sides of the cross-tab boundary can share its types and helpers.
+ * (The `@app-config` import is data only — a JSON catalog, no runtime deps.)
  */
+
+import appConfig from '@app-config';
 
 /**
  * The kinds of LLM backend a {@link ProviderInstance} can be. Each kind
@@ -86,17 +89,27 @@ export const AGENT_MODEL_KEYS = ['orchestrator', 'planner', 'coder'] as const;
 export type AgentModelKey = (typeof AGENT_MODEL_KEYS)[number];
 
 export interface Settings {
-    /** Configured LLM providers. The flattened union of their enabled models is what selectors offer. */
+    /**
+     * Configured LLM providers — the flattened union of their enabled models is
+     * what selectors offer. DERIVED on every load from the `@app-config` catalog
+     * with persisted {@link apiKeys} overlaid; the catalog itself is build-time
+     * config and is **never** persisted to IDB (see `persist` in `settings.ts`).
+     */
     providers: ProviderInstance[];
+    /**
+     * Persisted API keys, keyed by provider id — the ONLY provider-related state
+     * stored in IDB. The catalog (which providers/models exist, labels, enabled,
+     * pricing) always comes from `@app-config`; a stored key is overlaid onto the
+     * matching provider, and a key for a provider absent from (or disabled in)
+     * the catalog is ignored — that provider is not shown at all.
+     */
+    apiKeys: Record<string, string>;
     /** Fully-qualified id (`providerId:modelId`) of the primary model. */
     defaultModelId: string;
     /**
-     * When true (the default), every agent uses {@link defaultModelId}. When
-     * false, each agent uses its entry in {@link agentModels}, falling back to
-     * {@link defaultModelId} where unset.
+     * Per-agent model overrides (fully-qualified ids). An agent with no entry
+     * (the default) inherits {@link defaultModelId} at resolution time.
      */
-    useOneModelForAll: boolean;
-    /** Per-agent model overrides (fully-qualified ids), consulted only when `useOneModelForAll` is false. */
     agentModels: Partial<Record<AgentModelKey, string>>;
     piiEnabled: boolean;
     powerUser: boolean;
@@ -163,71 +176,51 @@ function mkModel(
     return entry;
 }
 
-// Factories rather than module-level consts so every consumer gets a
-// fresh, independently mutable copy — see the long-standing note about
-// Solid's `reconcile()` mutating shared entries in place.
+/**
+ * The dev-only API key to overlay onto a provider whose config JSON left the
+ * key blank, matched by kind (so a renamed provider id still picks the right
+ * key). Returns `undefined` for keyless kinds (chrome-ai) so no `apiKey`
+ * field is added; returns `''` for key-kinds with no dev key (prod) so the
+ * field renders empty and editable. See {@link defaultProviders}.
+ */
+function seedApiKey(kind: ProviderKind, jsonKey: string | undefined): string | undefined {
+    if (kind === 'chrome-ai') return undefined; // on-device — no key
+    const fromJson = (jsonKey ?? '').trim();
+    if (fromJson) return fromJson;
+    if (kind === 'openrouter') return DEV_DEFAULT_API_KEY;
+    if (kind === 'google-ai-studio') return DEV_DEFAULT_GOOGLE_AI_STUDIO_KEY;
+    return ''; // openai-compatible: present-but-empty so the field renders
+}
+
+// Factory (not a module-level const) so every consumer gets a fresh,
+// independently mutable copy — see the long-standing note about Solid's
+// `reconcile()` mutating shared entries in place. The catalog (provider ids,
+// kinds, labels, models, baked-in pricing) comes from the `@app-config` JSON
+// chosen at build time; dev API keys overlay from `.env.local` per kind.
 export function defaultProviders(): ProviderInstance[] {
-    return [
-        {
-            id: OPENROUTER_PROVIDER_ID,
-            kind: 'openrouter',
-            label: 'OpenRouter',
-            apiKey: DEV_DEFAULT_API_KEY,
-            enabled: true,
-            models: [
-                mkModel(OPENROUTER_PROVIDER_ID, 'openai/gpt-oss-120b:free', 'GPT-OSS 120B (free)', {
-                    prompt: 0,
-                    completion: 0,
-                }),
-                mkModel(
-                    OPENROUTER_PROVIDER_ID,
-                    'nvidia/nemotron-3-super-120b-a12b:free',
-                    'Nemotron 3 Super 120B A12B (free)',
-                    { prompt: 0, completion: 0 },
-                ),
-                mkModel(
-                    OPENROUTER_PROVIDER_ID,
-                    'google/gemini-2.5-flash-lite',
-                    'Gemini 2.5 Flash Lite ($)',
-                    { prompt: 0, completion: 0 },
-                ),
-            ],
-        },
-        {
-            id: GOOGLE_PROVIDER_ID,
-            kind: 'google-ai-studio',
-            label: 'Google AI Studio',
-            // Dev key seeds out-of-the-box Google access; empty in prod.
-            apiKey: DEV_DEFAULT_GOOGLE_AI_STUDIO_KEY,
-            enabled: true,
-            // No pricing baked in — Google has no pricing API; the user
-            // clicks "Download prices" to fill from the committed map.
-            models: [
-                mkModel(GOOGLE_PROVIDER_ID, 'gemini-2.5-flash', 'Gemini 2.5 Flash'),
-                mkModel(GOOGLE_PROVIDER_ID, 'gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite'),
-            ],
-        },
-        {
-            id: CHROME_AI_PROVIDER_ID,
-            kind: 'chrome-ai',
-            label: 'Chrome AI (on-device)',
-            enabled: true,
-            models: [
-                mkModel(CHROME_AI_PROVIDER_ID, 'gemini-nano', 'Chrome AI (Gemini Nano)', {
-                    prompt: 0,
-                    completion: 0,
-                }),
-            ],
-        },
-    ];
+    return appConfig.providers.map((p) => {
+        const provider: ProviderInstance = {
+            id: p.id,
+            kind: p.kind,
+            label: p.label,
+            enabled: p.enabled !== false,
+            models: p.models.map((m) => mkModel(p.id, m.modelId, m.label, m.pricing)),
+        };
+        const apiKey = seedApiKey(p.kind, p.apiKey);
+        if (apiKey !== undefined) provider.apiKey = apiKey;
+        if (typeof p.baseURL === 'string') provider.baseURL = p.baseURL;
+        return provider;
+    });
 }
 
 export function defaultSettings(): Settings {
     const providers = defaultProviders();
     return {
         providers,
-        defaultModelId: providers[0]!.models[0]!.id,
-        useOneModelForAll: true,
+        apiKeys: {},
+        // The orchestrator is the primary agent; with no overrides it (and thus
+        // `defaultModelId`) resolves to the config default.
+        defaultModelId: resolveAgentModel(providers, {}, 'orchestrator'),
         agentModels: {},
         piiEnabled: true,
         powerUser: import.meta.env.DEV,
@@ -241,6 +234,28 @@ export function defaultSettings(): Settings {
 /** Flatten enabled providers' models into a single list (selector source of truth). */
 export function allModels(providers: ProviderInstance[]): ModelEntry[] {
     return providers.filter((p) => p.enabled).flatMap((p) => p.models);
+}
+
+/**
+ * The model an agent runs with. An agent's saved pick wins, but ONLY while that
+ * model is still in the enabled `@app-config` catalog; otherwise (unset, or the
+ * model has left the catalog) it falls back to the config default
+ * (`appConfig.defaultModelId`, validated, else the first enabled model). The
+ * raw pick stays in {@link Settings.agentModels} either way, so it re-applies if
+ * the model returns. The orchestrator's resolution doubles as the primary
+ * (`defaultModelId`) — chat submit, Test, pricing.
+ */
+export function resolveAgentModel(
+    providers: ProviderInstance[],
+    agentModels: Settings['agentModels'],
+    agentId: AgentModelKey,
+): string {
+    const enabled = allModels(providers);
+    const has = (id: string | undefined): id is string => !!id && enabled.some((m) => m.id === id);
+    const saved = agentModels[agentId];
+    if (has(saved)) return saved;
+    const cfg = appConfig.defaultModelId;
+    return has(cfg) ? cfg : (enabled[0]?.id ?? '');
 }
 
 /** True when the chrome-ai provider's model is offered (enabled). */
@@ -277,147 +292,132 @@ export function findModelEntryIn(providers: ProviderInstance[], id: string): Mod
 }
 
 /**
- * Pre-multi-provider persisted shape. Only used by the migration branch
- * of {@link mergeWithDefaults}; new writes never produce these fields.
+ * Pre-multi-provider persisted shape, plus the now-derived `providers` field
+ * older blobs / UI patches may still carry. Used only to recover API keys in
+ * {@link mergeWithDefaults}; the catalog itself always comes from `@app-config`.
  */
 interface LegacySettings {
     provider?: string;
     apiKey?: string;
     chromeAiEnabled?: boolean;
-    models?: Array<{
-        id?: string;
-        label?: string;
-        openRouterModelId?: string;
-        provider?: string;
-        pricing?: ModelPricing;
-    }>;
-}
-
-function isModelEntry(x: unknown): x is ModelEntry {
-    if (!x || typeof x !== 'object') return false;
-    const m = x as Record<string, unknown>;
-    return typeof m.id === 'string' && typeof m.label === 'string' && typeof m.modelId === 'string';
-}
-
-function isProviderInstance(x: unknown): x is ProviderInstance {
-    if (!x || typeof x !== 'object') return false;
-    const p = x as Record<string, unknown>;
-    return (
-        typeof p.id === 'string' &&
-        typeof p.kind === 'string' &&
-        Array.isArray(p.models) &&
-        (p.models as unknown[]).every(isModelEntry)
-    );
-}
-
-/** Re-derive each model's `id` from its provider, dropping malformed rows. */
-function normalizeProvider(pr: ProviderInstance): ProviderInstance {
-    const next: ProviderInstance = {
-        id: pr.id,
-        kind: pr.kind,
-        label: typeof pr.label === 'string' && pr.label.length > 0 ? pr.label : pr.id,
-        enabled: pr.enabled !== false,
-        models: (pr.models ?? []).map((m) => {
-            const entry: ModelEntry = {
-                id: modelKey(pr.id, m.modelId),
-                modelId: m.modelId,
-                label: m.label,
-            };
-            if (m.pricing) entry.pricing = m.pricing;
-            return entry;
-        }),
-    };
-    if (typeof pr.apiKey === 'string') next.apiKey = pr.apiKey;
-    if (typeof pr.baseURL === 'string') next.baseURL = pr.baseURL;
-    return next;
+    models?: unknown;
 }
 
 /**
- * Resolve the providers array, migrating the legacy single-OpenRouter
- * shape on first load. Idempotent: once a valid `providers` array exists,
- * it is reused (normalized) on every subsequent merge.
+ * Recover the persisted API keys (the only provider state we keep) from a
+ * partial settings blob. The explicit `apiKeys` map is canonical; a `providers`
+ * array is consulted ONLY when there is no `apiKeys` map (a pre-`apiKeys`
+ * persisted blob), so we never re-harvest the *seeded* dev keys that ride on
+ * the derived `providers` of every live `Settings` back into the stored map.
+ * The legacy single-OpenRouter global `apiKey` always maps to `openrouter`.
+ * chrome-ai entries are dropped (on-device, keyless); empty harvested keys are
+ * skipped (an empty seed is "no key", not a stored override).
  */
-function resolveProviders(p: Partial<Settings> & LegacySettings): ProviderInstance[] {
-    if (Array.isArray(p.providers) && p.providers.every(isProviderInstance)) {
-        return p.providers.map(normalizeProvider);
+function resolveApiKeys(p: Partial<Settings> & LegacySettings): Record<string, string> {
+    const out: Record<string, string> = {};
+    if (p.apiKeys && typeof p.apiKeys === 'object') {
+        for (const [id, key] of Object.entries(p.apiKeys)) {
+            if (typeof key === 'string') out[id] = key;
+        }
+    } else if (Array.isArray(p.providers)) {
+        for (const pr of p.providers as ProviderInstance[]) {
+            if (
+                pr &&
+                typeof pr.id === 'string' &&
+                pr.kind !== 'chrome-ai' &&
+                typeof pr.apiKey === 'string' &&
+                pr.apiKey.trim()
+            ) {
+                out[pr.id] = pr.apiKey;
+            }
+        }
     }
-    // Legacy migration: fold the old global apiKey + flat `models` (keyed
-    // on openRouterModelId) into the default OpenRouter provider. Keeping
-    // provider id `openrouter` means existing `defaultModelId` /
-    // `agentModels` values (`openrouter:<slug>`) stay valid.
-    const providers = defaultProviders();
-    if (Array.isArray(p.models) || typeof p.apiKey === 'string') {
-        const migrated: ModelEntry[] = Array.isArray(p.models)
-            ? p.models
-                  .filter(
-                      (m) =>
-                          m &&
-                          typeof m.openRouterModelId === 'string' &&
-                          typeof m.label === 'string',
-                  )
-                  .map((m) =>
-                      mkModel(OPENROUTER_PROVIDER_ID, m.openRouterModelId!, m.label!, m.pricing),
-                  )
-            : [];
-        return providers.map((pr) =>
-            pr.id === OPENROUTER_PROVIDER_ID
-                ? {
-                      ...pr,
-                      apiKey: typeof p.apiKey === 'string' ? p.apiKey : pr.apiKey,
-                      models: migrated.length > 0 ? migrated : pr.models,
-                  }
-                : pr,
-        );
-    }
-    return providers;
+    if (typeof p.apiKey === 'string' && p.apiKey.trim()) out[OPENROUTER_PROVIDER_ID] = p.apiKey;
+    return out;
 }
 
-/** Drop legacy top-level keys so stale fields never persist back to IDB. */
+/**
+ * Build the runtime providers: the `@app-config` catalog with persisted keys
+ * overlaid (a stored key — including an explicit empty string — wins over the
+ * seeded dev key; a provider with no stored key keeps its seed, empty in prod).
+ * `prevPricing`, when given, re-applies session-fetched pricing (from "Download
+ * prices") by model fqid — pricing is part of the JSON-sourced catalog and is
+ * NOT persisted, so it only survives within a session.
+ */
+export function buildProviders(
+    apiKeys: Record<string, string>,
+    prevPricing?: ProviderInstance[],
+): ProviderInstance[] {
+    const priceMap = new Map<string, ModelPricing>();
+    if (prevPricing) {
+        for (const pr of prevPricing) {
+            for (const m of pr.models ?? []) if (m.pricing) priceMap.set(m.id, m.pricing);
+        }
+    }
+    return defaultProviders().map((p) => {
+        const stored = apiKeys[p.id];
+        const withKey =
+            p.kind !== 'chrome-ai' && stored !== undefined ? { ...p, apiKey: stored } : p;
+        if (priceMap.size === 0) return withKey;
+        return {
+            ...withKey,
+            models: withKey.models.map((m) => {
+                const pr = priceMap.get(m.id);
+                return pr ? { ...m, pricing: pr } : m;
+            }),
+        };
+    });
+}
+
+/** Drop legacy / derived / removed top-level keys so they never persist as stale state. */
 function stripLegacy(p: Partial<Settings> & LegacySettings): Partial<Settings> {
-    const { provider, apiKey, chromeAiEnabled, models, ...rest } = p as Record<string, unknown>;
+    // `providers` is derived (rebuilt from @app-config each load) — never let an
+    // incoming catalog ride through the spread. `useOneModelForAll` was removed.
+    // `provider`/`apiKey`/`chromeAiEnabled`/`models` are the pre-multi-provider
+    // legacy shape. (`apiKeys` is a real field — kept and set explicitly below.)
+    const { provider, apiKey, chromeAiEnabled, models, useOneModelForAll, providers, ...rest } =
+        p as Record<string, unknown>;
     void provider;
     void apiKey;
     void chromeAiEnabled;
     void models;
+    void useOneModelForAll;
+    void providers;
     return rest as Partial<Settings>;
 }
 
 export function mergeWithDefaults(p: Partial<Settings>): Settings {
     const base = defaultSettings();
     const legacy = p as Partial<Settings> & LegacySettings;
-    const providers = resolveProviders(legacy);
 
-    // Valid selections = ids of every ENABLED provider's models. A model
-    // under a disabled provider can't be the active default/override.
-    const validIds = new Set<string>();
-    for (const pr of providers) {
-        if (!pr.enabled) continue;
-        for (const m of pr.models) validIds.add(m.id);
-    }
-    const firstEnabled = allModels(providers)[0]?.id ?? base.defaultModelId;
-    const defaultModelId =
-        typeof p.defaultModelId === 'string' && validIds.has(p.defaultModelId)
-            ? p.defaultModelId
-            : firstEnabled;
+    // Keys are the only persisted provider state; the catalog is always rebuilt
+    // from @app-config. Session pricing (if any) rides on the incoming providers.
+    const apiKeys = resolveApiKeys(legacy);
+    const providers = buildProviders(apiKeys, Array.isArray(p.providers) ? p.providers : undefined);
 
-    // Sanitize per-agent overrides against the same valid-id set: a dropped
-    // override falls back to the default model at resolution time.
+    // Per-agent picks are kept RAW (any string) — validity against the catalog
+    // is checked at resolution time (`resolveAgentModel`), not here. A pick whose
+    // model has (temporarily) left the catalog is therefore retained in IDB and
+    // re-applies if the model returns, rather than being silently dropped.
     const agentModels: Settings['agentModels'] = {};
     if (p.agentModels && typeof p.agentModels === 'object') {
         for (const a of AGENT_MODEL_KEYS) {
             const v = (p.agentModels as Record<string, unknown>)[a];
-            if (typeof v === 'string' && validIds.has(v)) agentModels[a] = v;
+            if (typeof v === 'string') agentModels[a] = v;
         }
     }
-    const useOneModelForAll =
-        typeof p.useOneModelForAll === 'boolean' ? p.useOneModelForAll : base.useOneModelForAll;
+    // The orchestrator IS the primary agent — `defaultModelId` (chat submit /
+    // Test / pricing, and the orchestrator's own model) tracks its resolved
+    // pick; unset or no-longer-in-catalog → the config default. There is no
+    // separate user-set primary, so any persisted `defaultModelId` is ignored.
+    const defaultModelId = resolveAgentModel(providers, agentModels, 'orchestrator');
 
     return {
         ...base,
         ...stripLegacy(legacy),
+        apiKeys,
         providers,
         defaultModelId,
-        useOneModelForAll,
         agentModels,
     };
 }

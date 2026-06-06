@@ -46,6 +46,7 @@ import { addLocalEventTap, publish } from './state/broadcast';
 import type { RuntimeEvent } from './api';
 import { getSqliteDb } from '@/lib/sqlite/client';
 import { computeStepCost, extractUsageCounts } from '@/lib/agent/cost';
+import { primeModelPrices } from './prime-model-prices';
 
 export async function getSnapshot(): Promise<RuntimeSnapshot> {
     await settingsState.whenReady();
@@ -552,10 +553,26 @@ async function persistChat(
     // in the results store, so only its id is carried. Undefined here clears a
     // previously-persisted review on commit/reject/cancel.
     const pr = draft?.pendingReview;
+    // The user-facing title is decided by `work_on_action` and lands on the
+    // draft (`draft.actionName`) the instant the model names it — long before a
+    // candidate is under review and long before commit. Persist THAT whenever
+    // it's a real (non-stub) title.
+    //
+    // Deriving the name from `existing.name` instead was a two-headed bug. The
+    // high-frequency auto-persist re-stamped the "New Action" stub onto IDB, and
+    // `drafts.attachAction` (below) writes the persisted name BACK onto the live
+    // draft — clobbering the title `beginDraft` had just set. Net effect: the
+    // real title surfaced only after the user saved (sidebar + top-bar sat on
+    // "New Action" through the whole planner→coder→review cycle), and a reload
+    // while the review card was open had already persisted the stub into
+    // `pendingReview.actionName`, so committing from the reloaded tab
+    // (`commitReview`, which reads `draft.actionName`) saved "New Action" too.
+    const liveTitle = draft?.actionName.trim();
+    const liveName = liveTitle && liveTitle !== 'New Action' ? liveTitle : undefined;
     const pendingReview: PersistedPendingReview | undefined =
         pr && draft
             ? {
-                  actionName: draft.actionName,
+                  actionName: liveName ?? draft.actionName,
                   intent: pr.intent,
                   code: pr.code,
                   kind: pr.codeKind,
@@ -567,10 +584,7 @@ async function persistChat(
     const action: Action = existing
         ? {
               ...existing,
-              // While a candidate is under review the user-facing name lives on
-              // the draft (the persisted Action may still be the "New Action"
-              // stub); surface it so a reload shows the real title.
-              name: pendingReview ? pendingReview.actionName : existing.name,
+              name: liveName ?? existing.name,
               chatLog: structuredClone(session.messages),
               updatedAt: now,
               dataSourceId: existing.dataSourceId ?? initialDataSourceId,
@@ -579,7 +593,7 @@ async function persistChat(
           }
         : {
               id: actionId,
-              name: pendingReview?.actionName ?? 'New Action',
+              name: liveName ?? 'New Action',
               description: '',
               dataSources: [],
               code: null,
@@ -681,6 +695,16 @@ export function boot(): void {
             await db.seed();
         } catch (e) {
             console.warn('[runtime/host] initial seed failed', e);
+        }
+    })();
+    // Refresh model pricing in the background (OpenRouter cached 1 day; Google
+    // from its committed map). Pricing is session-only, so this runs each boot.
+    void (async () => {
+        try {
+            await settingsState.whenReady();
+            await primeModelPrices();
+        } catch (e) {
+            console.warn('[runtime/host] model price prime failed', e);
         }
     })();
 }

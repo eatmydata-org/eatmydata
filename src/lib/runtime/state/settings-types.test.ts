@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
     allModels,
+    buildProviders,
     CHROME_AI_MODEL_ID,
     defaultProviders,
     findModelEntryIn,
     mergeWithDefaults,
-    modelKey,
     OPENROUTER_PROVIDER_ID,
+    resolveAgentModel,
     splitModelId,
     type ProviderInstance,
     type Settings,
@@ -30,19 +31,25 @@ describe('splitModelId', () => {
 });
 
 describe('mergeWithDefaults — per-agent model fields', () => {
+    // The config default in the test fixture (= appConfig.defaultModelId).
+    const configDefault = validId;
+
     it('fills new fields with defaults when absent from persisted settings', () => {
         const merged = mergeWithDefaults({});
-        expect(merged.useOneModelForAll).toBe(true);
         expect(merged.agentModels).toEqual({});
+        expect(merged.apiKeys).toEqual({});
         expect(merged.providers.length).toBeGreaterThan(0);
+        // No overrides → orchestrator (and thus defaultModelId) is the config default.
+        expect(merged.defaultModelId).toBe(configDefault);
     });
 
-    it('keeps valid agent overrides and drops ids not in any provider', () => {
+    it('keeps raw agent picks (even one no longer in the catalog) — validity is deferred', () => {
         const merged = mergeWithDefaults({
             agentModels: { orchestrator: validId, planner: 'openrouter:does-not-exist' },
         });
+        // Both retained verbatim in IDB; resolveAgentModel handles validity.
         expect(merged.agentModels.orchestrator).toBe(validId);
-        expect(merged.agentModels.planner).toBeUndefined();
+        expect(merged.agentModels.planner).toBe('openrouter:does-not-exist');
     });
 
     it('accepts a model id from a different (enabled) provider', () => {
@@ -51,30 +58,17 @@ describe('mergeWithDefaults — per-agent model fields', () => {
         expect(merged.agentModels.planner).toBe(googleId);
     });
 
-    it('accepts the chrome-ai model id while its provider is enabled', () => {
-        const merged = mergeWithDefaults({ agentModels: { coder: CHROME_AI_MODEL_ID } });
-        expect(merged.agentModels.coder).toBe(CHROME_AI_MODEL_ID);
+    it('defaultModelId tracks the orchestrator pick (orchestrator = primary)', () => {
+        const googleId = googleProvider().models[0]!.id;
+        const merged = mergeWithDefaults({ agentModels: { orchestrator: googleId } });
+        expect(merged.defaultModelId).toBe(googleId);
     });
 
-    it('drops a chrome-ai override when its provider is disabled', () => {
-        const merged = mergeWithDefaults({
-            providers: chromeDisabled(),
-            agentModels: { coder: CHROME_AI_MODEL_ID },
-        });
-        expect(merged.agentModels.coder).toBeUndefined();
-    });
-
-    it('snaps a chrome-ai default to the first enabled model when its provider is disabled', () => {
-        const merged = mergeWithDefaults({
-            providers: chromeDisabled(),
-            defaultModelId: CHROME_AI_MODEL_ID,
-        });
-        expect(merged.defaultModelId).toBe(validId);
-    });
-
-    it('keeps a chrome-ai default model while its provider is enabled', () => {
-        const merged = mergeWithDefaults({ defaultModelId: CHROME_AI_MODEL_ID });
-        expect(merged.defaultModelId).toBe(CHROME_AI_MODEL_ID);
+    it('defaultModelId falls back to the config default when the orchestrator pick left the catalog', () => {
+        const merged = mergeWithDefaults({ agentModels: { orchestrator: 'openrouter:gone' } });
+        expect(merged.defaultModelId).toBe(configDefault);
+        // The raw pick is still retained for if/when that model returns.
+        expect(merged.agentModels.orchestrator).toBe('openrouter:gone');
     });
 
     it('ignores non-string override values', () => {
@@ -84,92 +78,143 @@ describe('mergeWithDefaults — per-agent model fields', () => {
         });
         expect(merged.agentModels).toEqual({});
     });
+});
 
-    it('coerces a non-boolean useOneModelForAll to the default', () => {
-        const merged = mergeWithDefaults({
-            // @ts-expect-error — exercising malformed persisted data
-            useOneModelForAll: 'yes',
-        });
-        expect(merged.useOneModelForAll).toBe(true);
+describe('resolveAgentModel', () => {
+    const providers = defaultProviders();
+    const configDefault = validId; // = appConfig.defaultModelId in the fixture
+
+    it('returns a saved pick that is still in the enabled catalog', () => {
+        const googleId = googleProvider().models[0]!.id;
+        expect(resolveAgentModel(providers, { planner: googleId }, 'planner')).toBe(googleId);
+        expect(resolveAgentModel(providers, { coder: CHROME_AI_MODEL_ID }, 'coder')).toBe(
+            CHROME_AI_MODEL_ID,
+        );
     });
 
-    it('preserves an explicit useOneModelForAll: false', () => {
-        const merged = mergeWithDefaults({ useOneModelForAll: false });
-        expect(merged.useOneModelForAll).toBe(false);
+    it('falls back to the config default when unset', () => {
+        expect(resolveAgentModel(providers, {}, 'orchestrator')).toBe(configDefault);
+    });
+
+    it('falls back to the config default when the saved pick is not in the catalog', () => {
+        expect(resolveAgentModel(providers, { coder: 'openrouter:gone' }, 'coder')).toBe(
+            configDefault,
+        );
+    });
+
+    it('falls back when the saved pick belongs to a disabled provider', () => {
+        const disabled = providers.map((p) =>
+            p.kind === 'chrome-ai' ? { ...p, enabled: false } : p,
+        );
+        expect(resolveAgentModel(disabled, { coder: CHROME_AI_MODEL_ID }, 'coder')).toBe(
+            configDefault,
+        );
     });
 });
 
-describe('mergeWithDefaults — legacy single-OpenRouter migration', () => {
-    // The pre-multi-provider persisted shape.
-    const legacy = {
-        provider: 'openrouter',
-        apiKey: 'sk-legacy',
-        chromeAiEnabled: true,
-        models: [
-            {
-                id: 'openrouter:foo/bar',
-                label: 'Foo Bar',
-                openRouterModelId: 'foo/bar',
-                pricing: { prompt: 0.000001, completion: 0.000002 },
-            },
-            {
-                id: 'openrouter:baz/qux:free',
-                label: 'Baz (free)',
-                openRouterModelId: 'baz/qux:free',
-            },
-        ],
-        defaultModelId: 'openrouter:foo/bar',
-        agentModels: { coder: 'openrouter:baz/qux:free' },
-        useOneModelForAll: false,
-    } as unknown as Partial<Settings>;
+describe('mergeWithDefaults — catalog from @app-config, keys from persisted state', () => {
+    it('always builds the catalog from the JSON config, ignoring a persisted providers array', () => {
+        // A persisted "providers" blob with a bogus provider must NOT leak into
+        // the catalog — only its keys are recovered.
+        const merged = mergeWithDefaults({
+            providers: [
+                {
+                    id: 'bogus',
+                    kind: 'openrouter',
+                    label: 'Bogus',
+                    enabled: true,
+                    models: [{ id: 'bogus:x', modelId: 'x', label: 'X' }],
+                },
+            ] as ProviderInstance[],
+        });
+        expect(merged.providers.map((p) => p.id)).toEqual(defaultProviders().map((p) => p.id));
+        expect(merged.providers.some((p) => p.id === 'bogus')).toBe(false);
+    });
 
-    it('folds the legacy apiKey + models into an OpenRouter provider', () => {
-        const merged = mergeWithDefaults(legacy);
+    it('overlays a stored apiKey onto the matching provider and round-trips the map', () => {
+        const merged = mergeWithDefaults({ apiKeys: { [OPENROUTER_PROVIDER_ID]: 'sk-stored' } });
         const or = merged.providers.find((p) => p.id === OPENROUTER_PROVIDER_ID)!;
-        expect(or.kind).toBe('openrouter');
+        expect(or.apiKey).toBe('sk-stored');
+        expect(merged.apiKeys[OPENROUTER_PROVIDER_ID]).toBe('sk-stored');
+    });
+
+    it('ignores a key for a provider absent from the catalog (not shown)', () => {
+        const merged = mergeWithDefaults({ apiKeys: { 'no-such-provider': 'sk-x' } });
+        expect(merged.providers.some((p) => p.id === 'no-such-provider')).toBe(false);
+    });
+
+    it('recovers a legacy single-OpenRouter global apiKey as the openrouter key', () => {
+        const merged = mergeWithDefaults({ apiKey: 'sk-legacy' } as unknown as Partial<Settings>);
+        const or = merged.providers.find((p) => p.id === OPENROUTER_PROVIDER_ID)!;
         expect(or.apiKey).toBe('sk-legacy');
-        expect(or.models).toEqual([
-            {
-                id: 'openrouter:foo/bar',
-                modelId: 'foo/bar',
-                label: 'Foo Bar',
-                pricing: { prompt: 0.000001, completion: 0.000002 },
-            },
-            {
-                id: modelKey(OPENROUTER_PROVIDER_ID, 'baz/qux:free'),
-                modelId: 'baz/qux:free',
-                label: 'Baz (free)',
-            },
-        ]);
+        expect(merged.apiKeys[OPENROUTER_PROVIDER_ID]).toBe('sk-legacy');
+        // Models still come from the JSON catalog, not the legacy blob.
+        expect(or.models.length).toBeGreaterThan(0);
     });
 
-    it('keeps the existing fully-qualified default + agent ids valid through migration', () => {
-        const merged = mergeWithDefaults(legacy);
-        expect(merged.defaultModelId).toBe('openrouter:foo/bar');
-        expect(merged.agentModels.coder).toBe('openrouter:baz/qux:free');
-        expect(merged.useOneModelForAll).toBe(false);
+    it('recovers keys from an older persisted providers array', () => {
+        const blob = {
+            providers: defaultProviders().map((p) =>
+                p.id === OPENROUTER_PROVIDER_ID ? { ...p, apiKey: 'sk-from-blob' } : p,
+            ),
+        };
+        const merged = mergeWithDefaults(blob);
+        expect(merged.providers.find((p) => p.id === OPENROUTER_PROVIDER_ID)!.apiKey).toBe(
+            'sk-from-blob',
+        );
     });
 
-    it('strips legacy top-level keys so they never persist', () => {
+    it('snaps a persisted defaultModelId that is not in the JSON catalog', () => {
+        const merged = mergeWithDefaults({ defaultModelId: 'openrouter:not-in-config' });
+        expect(merged.defaultModelId).toBe(validId);
+    });
+
+    it('strips legacy / removed top-level keys so they never persist', () => {
+        const legacy = {
+            provider: 'openrouter',
+            apiKey: 'sk-legacy',
+            chromeAiEnabled: true,
+            models: [{ openRouterModelId: 'foo/bar', label: 'Foo' }],
+            useOneModelForAll: false,
+        } as unknown as Partial<Settings>;
         const merged = mergeWithDefaults(legacy) as unknown as Record<string, unknown>;
-        expect(merged.apiKey).toBeUndefined();
         expect(merged.provider).toBeUndefined();
+        expect(merged.apiKey).toBeUndefined();
         expect(merged.chromeAiEnabled).toBeUndefined();
         expect(merged.models).toBeUndefined();
+        expect(merged.useOneModelForAll).toBeUndefined();
     });
 
-    it('is idempotent — re-merging a migrated result is a no-op on providers', () => {
-        const once = mergeWithDefaults(legacy);
+    it('is idempotent — re-merging a merged result reproduces the same providers', () => {
+        const once = mergeWithDefaults({ apiKeys: { [OPENROUTER_PROVIDER_ID]: 'sk-x' } });
         const twice = mergeWithDefaults(once);
         expect(twice.providers).toEqual(once.providers);
+        expect(twice.apiKeys).toEqual(once.apiKeys);
+    });
+});
+
+describe('buildProviders', () => {
+    it('re-applies session pricing by model fqid from a prior providers array', () => {
+        const priced = defaultProviders().map((p) =>
+            p.kind === 'google-ai-studio'
+                ? {
+                      ...p,
+                      models: p.models.map((m) => ({
+                          ...m,
+                          pricing: { prompt: 1e-7, completion: 4e-7 },
+                      })),
+                  }
+                : p,
+        );
+        const built = buildProviders({}, priced);
+        const google = built.find((p) => p.kind === 'google-ai-studio')!;
+        expect(google.models[0]!.pricing).toEqual({ prompt: 1e-7, completion: 4e-7 });
     });
 
-    it('also migrates when only a legacy apiKey is present (no models array)', () => {
-        const merged = mergeWithDefaults({ apiKey: 'sk-only' } as unknown as Partial<Settings>);
-        const or = merged.providers.find((p) => p.id === OPENROUTER_PROVIDER_ID)!;
-        expect(or.apiKey).toBe('sk-only');
-        // Falls back to the default model list when none were persisted.
-        expect(or.models.length).toBeGreaterThan(0);
+    it('never attaches a key to the keyless chrome-ai provider', () => {
+        const built = buildProviders({ 'chrome-ai': 'sk-should-be-ignored' });
+        const chrome = built.find((p) => p.kind === 'chrome-ai')!;
+        expect(chrome.apiKey).toBeUndefined();
     });
 });
 

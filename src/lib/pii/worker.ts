@@ -92,7 +92,6 @@ export class PiiAccessor {
     #readyAt = 0;
 
     async #boot(): Promise<TokenClassificationPipeline> {
-        debugger;
         this.#bootStartedAt = Date.now();
         // NOTE: keep this as a root-relative path, NOT a full URL.
         env.localModelPath = ASSET_BASE + '/';
@@ -166,6 +165,31 @@ export class PiiAccessor {
         }
     }
 
+    /**
+     * Byte size of the ONNX model file the pipeline will download,
+     * probed with a HEAD request against the *same* `ASSET_BASE` the
+     * boot path loads from — so the "~X MB" shown in Settings can't
+     * drift from the URL the model actually fetches.
+     *
+     * This lives here, not in Settings, precisely because of that
+     * coupling: Settings used to hardcode a bare `/tiny-pii/...` URL
+     * with no `APP_VERSION` prefix, which 404'd in every build and
+     * silently rendered a blank size (the `catch { return null }`
+     * hid it). Throwing on a non-OK response surfaces a misconfigured
+     * asset path loudly instead. Returns null only when an otherwise
+     * OK response omits Content-Length.
+     */
+    async modelSizeBytes(): Promise<number | null> {
+        const m = await this.getManifest();
+        const url = `${ASSET_BASE}/${m.model_id}/${m.model_file}`;
+        const res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (!res.ok) {
+            throw new Error(`tiny-pii model file missing at ${url} (HTTP ${res.status})`);
+        }
+        const len = res.headers.get('content-length');
+        return len ? Number(len) : null;
+    }
+
     #get(): Promise<TokenClassificationPipeline> {
         // Don't cache rejections — a SharedWorker survives tab reloads,
         // so a first-boot failure (e.g. asset path misconfigured) would
@@ -192,6 +216,47 @@ export class PiiAccessor {
     /** True once the pipeline has finished booting. */
     isWarm(): boolean {
         return this.#readyAt > 0;
+    }
+
+    /**
+     * True if the model weights are already in the browser HTTP Cache —
+     * i.e. a previous session downloaded them, so a future `warmup()`
+     * loads instantly from cache instead of re-fetching the ~N MB ONNX.
+     *
+     * We don't cache anything ourselves: transformers.js persists every
+     * local model file it fetches into the `env.cacheKey` Cache (keyed by
+     * the same root-relative path the model loads from) and reads from it
+     * on the next boot. This just probes that cache for the model file.
+     * We reference `env.cacheKey` rather than hardcoding 'transformers-cache'
+     * so the probe can't drift from the name transformers actually opens.
+     *
+     * Distinct from `isWarm()`: a fresh SharedWorker (new tab, session, or
+     * browser restart) starts cold even when the bytes are cached, so
+     * Settings calls this to show "already downloaded" without paying the
+     * boot cost. The probe is best-effort — a failure logs and degrades to
+     * `false` (i.e. offer the download) rather than throwing.
+     */
+    async isCached(): Promise<boolean> {
+        // Booted in this session ⇒ the files were necessarily fetched/cached.
+        if (this.#readyAt > 0) return true;
+        if (typeof caches === 'undefined') return false;
+        const m = await this.getManifest();
+        // Same URL `modelSizeBytes` HEADs and `#boot` loads — and the exact
+        // key transformers stores the fetched file under.
+        const modelUrl = `${ASSET_BASE}/${m.model_id}/${m.model_file}`;
+        try {
+            const cache = await caches.open(env.cacheKey);
+            if (await cache.match(modelUrl)) return true;
+            // Belt-and-suspenders: if transformers ever keys under a
+            // normalized/absolute form, still match any entry resolving to
+            // this model file.
+            const suffix = `/${m.model_id}/${m.model_file}`;
+            const keys = await cache.keys();
+            return keys.some((req) => req.url.endsWith(suffix));
+        } catch (e) {
+            console.error('[pii] model cache probe failed:', e);
+            return false;
+        }
     }
 
     /**

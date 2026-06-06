@@ -322,7 +322,7 @@
 }
 
 .sd-bubble code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--default-mono-font-family);
     font-size: 0.875em;
     color: inherit;
     background: color-mix(in srgb, currentColor 10%, transparent);

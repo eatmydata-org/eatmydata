@@ -1,6 +1,11 @@
 import type { LanguageModelV3 } from '@ai-sdk/provider';
 import { findModelEntry, getSettings } from '@/lib/runtime/state/settings';
-import { allModels, type AgentModelKey, type ModelEntry } from '@/lib/runtime/state/settings-types';
+import {
+    allModels,
+    resolveAgentModel,
+    type AgentModelKey,
+    type ModelEntry,
+} from '@/lib/runtime/state/settings-types';
 import { getRegistry } from './registry';
 
 export type ModelChoice = ModelEntry;
@@ -10,16 +15,15 @@ export function findModel(id: string): ModelChoice {
 }
 
 /**
- * The model id an agent should run with, or `undefined` to inherit the
- * caller's primary model. Read at agent spawn time (see {@link runAgent}'s
- * `findModel(definition.modelId ?? args.modelId)`): when "use one model for
- * all" is on, or the agent has no override, returns `undefined` so the loop
- * falls back to the primary (`defaultModelId`).
+ * The model id an agent runs with: its saved pick when that model is still in
+ * the enabled `@app-config` catalog, otherwise the config default (see
+ * {@link resolveAgentModel}). Always concrete — the loop's
+ * `findModel(definition.modelId ?? args.modelId)` therefore uses each agent's
+ * own resolved model rather than inheriting the caller's.
  */
-export function resolveAgentModelId(agentId: AgentModelKey): string | undefined {
+export function resolveAgentModelId(agentId: AgentModelKey): string {
     const s = getSettings();
-    if (s.useOneModelForAll) return undefined;
-    return s.agentModels?.[agentId];
+    return resolveAgentModel(s.providers, s.agentModels, agentId);
 }
 
 export function availableModels(): ModelChoice[] {

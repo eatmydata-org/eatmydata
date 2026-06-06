@@ -24,8 +24,25 @@ function workerVersionsStub(): Plugin {
 
 export default defineConfig({
     plugins: [workerVersionsStub()],
+    // Mirror the real build's global define (vite.config.ts) so worker
+    // modules that read the bare `APP_VERSION` global at import time
+    // (e.g. src/lib/pii/worker.ts's ASSET_BASE) can load under vitest.
+    define: {
+        APP_VERSION: JSON.stringify('test'),
+    },
     resolve: {
-        alias: [{ find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) }],
+        alias: [
+            {
+                // Tests pin a stable fixture catalog (openrouter + google +
+                // chrome-ai, all enabled) so they don't depend on the app's
+                // mutable src/assets/config/*.json.
+                find: '@app-config',
+                replacement: fileURLToPath(
+                    new URL('./src/lib/runtime/state/app-config.fixture.json', import.meta.url),
+                ),
+            },
+            { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+        ],
     },
     test: {
         environment: 'node',

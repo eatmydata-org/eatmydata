@@ -1,5 +1,6 @@
 import { defineConfig, defaultClientConditions } from 'vite';
 import { fileURLToPath } from 'node:url';
+import { isAbsolute, resolve } from 'node:path';
 import solid from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
 import { workerVersion } from './tools/vite-plugin-worker-version';
@@ -30,6 +31,25 @@ export default defineConfig(({ command }) => {
             ? `${pkg.version}-${bigintToBase62(BigInt(+new Date()))}`
             : 'src/assets';
     const projectRoot = fileURLToPath(new URL('.', import.meta.url));
+
+    // The LLM provider/model catalog is seeded from a JSON config file chosen
+    // at build time. `APP_CONFIG` (a project-relative or absolute path) wins;
+    // otherwise default to the dev catalog under `vite serve` and the prod
+    // catalog when bundling. The `@app-config` alias makes it importable from
+    // settings-types.ts (see also vitest.config.ts, which pins the dev file).
+    const defaultAppConfig =
+        command === 'serve'
+            ? 'src/assets/config/app-config.dev.json'
+            : 'src/assets/config/app-config.prod.json';
+    const appConfigEnv = process.env.APP_CONFIG;
+    let appConfigPath: string;
+    if (!appConfigEnv) {
+        appConfigPath = resolve(projectRoot, defaultAppConfig);
+    } else {
+        appConfigPath = isAbsolute(appConfigEnv)
+            ? appConfigEnv
+            : resolve(projectRoot, appConfigEnv);
+    }
 
     return {
         server: {
@@ -129,6 +149,7 @@ export default defineConfig(({ command }) => {
                         ),
                     ),
                 },
+                { find: '@app-config', replacement: appConfigPath },
                 { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
             ],
         },
