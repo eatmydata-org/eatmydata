@@ -83,8 +83,7 @@ describe('PiiAccessor.modelSizeBytes', () => {
         model_id: 'mozilla-ai/tiny-pii-tinyBERT-general-4L-312D',
         model_file: 'onnx/model.onnx',
     };
-    // ASSET_BASE = '/' + APP_VERSION + '/tiny-pii'; vitest.config pins
-    // APP_VERSION to 'test'.
+    // ASSET_BASE = PII_ASSET_BASE; vitest.config pins it to '/test/tiny-pii'.
     const BASE = '/test/tiny-pii';
 
     afterEach(() => vi.unstubAllGlobals());
@@ -146,9 +145,9 @@ describe('PiiAccessor.isCached', () => {
         model_id: 'gravitee-io/bert-small-pii-detection',
         model_file: 'onnx/model.onnx',
     };
-    // ASSET_BASE = '/' + APP_VERSION + '/tiny-pii'; vitest pins APP_VERSION
-    // to 'test'. This is the same URL `modelSizeBytes` probes AND the key
-    // transformers.js stores the fetched model file under.
+    // ASSET_BASE = PII_ASSET_BASE; vitest pins it to '/test/tiny-pii'. This is
+    // the same URL `modelSizeBytes` probes AND the key transformers.js stores
+    // the fetched model file under.
     const MODEL_URL = `/test/tiny-pii/${MANIFEST.model_id}/${MANIFEST.model_file}`;
 
     afterEach(() => vi.unstubAllGlobals());

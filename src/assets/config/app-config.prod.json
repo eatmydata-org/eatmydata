@@ -1,5 +1,5 @@
 {
-    "defaultModelId": "openrouter:openai/gpt-oss-120b:free",
+    "defaultModelId": "openrouter:google/gemini-3.1-flash-lite",
     "providers": [
         {
             "id": "openrouter",
@@ -14,13 +14,15 @@
                 },
                 {
                     "modelId": "nvidia/nemotron-3-super-120b-a12b:free",
-                    "label": "Nemotron 3 Super 120B A12B (free)",
-                    "pricing": { "prompt": 0, "completion": 0 }
+                    "label": "Nemotron 3 Super 120B A12B (free)"
                 },
                 {
                     "modelId": "google/gemini-2.5-flash-lite",
-                    "label": "Gemini 2.5 Flash Lite ($)",
-                    "pricing": { "prompt": 0, "completion": 0 }
+                    "label": "Gemini 2.5 Flash Lite"
+                },
+                {
+                    "modelId": "google/gemini-3.1-flash-lite",
+                    "label": "Gemini 3.1 Flash Lite"
                 }
             ]
         },
@@ -28,7 +30,7 @@
             "id": "google",
             "kind": "google-ai-studio",
             "label": "Google AI Studio",
-            "enabled": true,
+            "enabled": false,
             "models": [
                 { "modelId": "gemini-2.5-flash", "label": "Gemini 2.5 Flash" },
                 { "modelId": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite" }
@@ -38,12 +40,11 @@
             "id": "chrome-ai",
             "kind": "chrome-ai",
             "label": "Chrome AI (on-device)",
-            "enabled": true,
+            "enabled": false,
             "models": [
                 {
                     "modelId": "gemini-nano",
-                    "label": "Chrome AI (Gemini Nano)",
-                    "pricing": { "prompt": 0, "completion": 0 }
+                    "label": "Chrome AI (Gemini Nano)"
                 }
             ]
         }

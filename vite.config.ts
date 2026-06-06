@@ -1,6 +1,8 @@
 import { defineConfig, defaultClientConditions } from 'vite';
 import { fileURLToPath } from 'node:url';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import solid from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
 import { workerVersion } from './tools/vite-plugin-worker-version';
@@ -24,6 +26,46 @@ function bigintToBase62(val: bigint): string {
     return result || '0';
 }
 
+/// Dir-relative file paths under `dir`, recursively, sorted per level.
+function collectFiles(dir: string, base = dir): string[] {
+    const out: string[] = [];
+    for (const name of readdirSync(dir).sort()) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+            out.push(...collectFiles(full, base));
+        } else {
+            out.push(relative(base, full));
+        }
+    }
+    return out;
+}
+
+/// 16-char content checksum of every file under `dir`, folding each file's
+/// dir-relative path and bytes into the digest (so a rename or an edit moves
+/// the hash). Gives a large static-asset folder a URL that stays untouched
+/// across releases while its content is unchanged — letting deploy/deploy.sh
+/// skip re-uploading it. Returns `'unbuilt'` (with a loud warning) when the
+/// folder is missing, preserving the prior "build succeeds, runtime 404s"
+/// behavior for assets that haven't been generated yet.
+function hashAssetDir(dir: string): string {
+    let files: string[];
+    try {
+        files = collectFiles(dir);
+    } catch (err) {
+        console.warn(
+            `[asset-hash] ${dir} missing/unreadable (${String(err)}); using 'unbuilt'. ` +
+                `Run the matching make target (demo-data / tiny-pii / wa-sqlite) to populate it.`,
+        );
+        return 'unbuilt';
+    }
+    const h = createHash('sha256');
+    for (const rel of files.sort()) {
+        h.update(rel);
+        h.update(readFileSync(join(dir, rel)));
+    }
+    return h.digest('hex').slice(0, 16);
+}
+
 export default defineConfig(({ command }) => {
     const isProduction = 'production' == process.env.NODE_ENV;
     const APP_VERSION =
@@ -31,6 +73,26 @@ export default defineConfig(({ command }) => {
             ? `${pkg.version}-${bigintToBase62(BigInt(+new Date()))}`
             : 'src/assets';
     const projectRoot = fileURLToPath(new URL('.', import.meta.url));
+
+    // Large static assets (the demo .sqlite databases, the tiny-pii model +
+    // tokenizer + ort wasm, and the wa-sqlite/qjs engine wasm) get a path
+    // keyed by a content checksum of their source folder — NOT the per-build
+    // APP_VERSION. An unchanged asset therefore keeps the same URL across
+    // releases, so deploy/deploy.sh can skip re-uploading it (and we don't
+    // balloon the CDN with byte-identical copies under fresh timestamps).
+    // In dev they stay under `src/assets/...` exactly as before; the checksum
+    // is computed only when bundling, never under `vite serve`.
+    const isServe = command === 'serve';
+    const assetVersion = (rel: string): string =>
+        isServe ? 'src/assets' : hashAssetDir(resolve(projectRoot, rel));
+    const demoVersion = assetVersion('src/assets/demo');
+    const piiVersion = assetVersion('src/assets/tiny-pii');
+    const wasmVersion = assetVersion('src/assets/wasm');
+    // Root-relative bases injected as globals (below) and read at runtime by
+    // demo-source.ts / pii/worker.ts. Build: `/<hash>/demo`; dev:
+    // `/src/assets/demo`.
+    const DEMO_ASSET_BASE = `/${demoVersion}/demo`;
+    const PII_ASSET_BASE = `/${piiVersion}/tiny-pii`;
 
     // The LLM provider/model catalog is seeded from a JSON config file chosen
     // at build time. `APP_CONFIG` (a project-relative or absolute path) wins;
@@ -81,12 +143,12 @@ export default defineConfig(({ command }) => {
                 targets: [
                     {
                         src: 'src/assets/tiny-pii/**',
-                        dest: `${APP_VERSION}/tiny-pii/`,
+                        dest: `${piiVersion}/tiny-pii/`,
                         rename: { stripBase: 3 },
                     },
                     {
                         src: 'src/assets/demo/**',
-                        dest: `${APP_VERSION}/demo/`,
+                        dest: `${demoVersion}/demo/`,
                         rename: { stripBase: 3 },
                     },
                 ],
@@ -105,7 +167,26 @@ export default defineConfig(({ command }) => {
             target: 'esnext',
             outDir: `dist/${isProduction ? 'production' : 'development'}`,
             copyPublicDir: true,
+            // App JS/CSS chunks + non-wasm assets stay under the per-build
+            // APP_VERSION folder (they change every release anyway). The wasm
+            // engine binaries (wa-sqlite.wasm, qjs.wasm) are routed to their
+            // own content-checksum folder so an unchanged engine build keeps a
+            // stable URL across releases — the `new URL('@/assets/wasm/…',
+            // import.meta.url)` references in runtime.ts / qjs.ts pick up this
+            // emitted path automatically.
             assetsDir: APP_VERSION,
+            rollupOptions: {
+                output: {
+                    assetFileNames: (info) => {
+                        const meta = info as { names?: string[]; name?: string };
+                        const names = meta.names ?? (meta.name ? [meta.name] : []);
+                        const isWasm = names.some((n) => n.endsWith('.wasm'));
+                        return isWasm
+                            ? `${wasmVersion}/[name]-[hash][extname]`
+                            : `${APP_VERSION}/[name]-[hash][extname]`;
+                    },
+                },
+            },
         },
         // ECharts / zrender reference `global` (Node.js style) at module
         // top-level. In the main thread `window` rescues them via shims,
@@ -114,7 +195,8 @@ export default defineConfig(({ command }) => {
         // Define both to `globalThis` so worker bundles compile cleanly.
         define: {
             global: 'globalThis',
-            APP_VERSION: JSON.stringify(APP_VERSION),
+            DEMO_ASSET_BASE: JSON.stringify(DEMO_ASSET_BASE),
+            PII_ASSET_BASE: JSON.stringify(PII_ASSET_BASE),
         },
         resolve: {
             // Stop rolldown from emitting a phantom 23 MB

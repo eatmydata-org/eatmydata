@@ -22,7 +22,11 @@ export type CreateDemoOptions = {
     signal?: AbortSignal;
 };
 
-const ASSET_BASE = '/' + APP_VERSION + '/demo';
+// `DEMO_ASSET_BASE` is injected by vite.config.ts: `/<content-hash>/demo` in
+// a build, `/src/assets/demo` in dev. The content-hash keeps the URL stable
+// across releases when the demo `.sqlite` files are unchanged, so deploy can
+// skip re-uploading ~235 MB of databases.
+const ASSET_BASE = DEMO_ASSET_BASE;
 
 /**
  * Download a pre-built demo .sqlite from `/demo/<spec>.sqlite`, drop it

@@ -5,8 +5,6 @@ interface ImportMetaEnv {
     readonly VITE_DEV_OPENROUTER_KEY?: string;
     /** Dev-only Google AI Studio key, from `.env.local`. Empty in prod / when unset. */
     readonly VITE_DEV_GOOGLE_AI_STUDIO_KEY?: string;
-    /** App release version */
-    readonly APP_VERSION: string;
 }
 
 interface ImportMeta {
@@ -23,7 +21,15 @@ declare module 'virtual:worker-versions' {
 }
 
 declare global {
-    const APP_VERSION: string;
+    /** Root-relative base URL for the tiny-pii model + tokenizer + ort wasm.
+     *  Injected by vite.config.ts. Build: `/<content-hash>/tiny-pii`; dev:
+     *  `/src/assets/tiny-pii`; vitest: `/test/tiny-pii`. The hash keeps the
+     *  URL stable across releases while the assets are unchanged. */
+    const PII_ASSET_BASE: string;
+    /** Root-relative base URL for the demo `.sqlite` databases. Injected by
+     *  vite.config.ts. Build: `/<content-hash>/demo`; dev: `/src/assets/demo`;
+     *  vitest: `/test/demo`. */
+    const DEMO_ASSET_BASE: string;
 }
 
 export {};

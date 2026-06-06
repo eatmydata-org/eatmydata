@@ -1,5 +1,5 @@
 {
-    "defaultModelId": "openrouter:openai/gpt-oss-120b:free",
+    "defaultModelId": "openrouter:google/gemini-3.1-flash-lite",
     "providers": [
         {
             "id": "openrouter",

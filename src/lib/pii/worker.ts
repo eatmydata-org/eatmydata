@@ -13,7 +13,11 @@ import { analyzeRegex } from './regex';
 declare const self: SharedWorkerGlobalScope;
 
 // Host-side path for the deploy/ tree produced by wasm/tiny-pii/build.py.
-const ASSET_BASE = '/' + APP_VERSION + '/tiny-pii';
+// `PII_ASSET_BASE` is injected by vite.config.ts: `/<content-hash>/tiny-pii`
+// in a build, `/src/assets/tiny-pii` in dev (and `/test/tiny-pii` under
+// vitest). The content-hash keeps the URL stable across releases when the
+// model/ort assets are unchanged.
+const ASSET_BASE = PII_ASSET_BASE;
 
 /**
  * Manifest written by `wasm/tiny-pii/build.py`. It's the single source
@@ -174,11 +178,11 @@ export class PiiAccessor {
      *
      * This lives here, not in Settings, precisely because of that
      * coupling: Settings used to hardcode a bare `/tiny-pii/...` URL
-     * with no `APP_VERSION` prefix, which 404'd in every build and
-     * silently rendered a blank size (the `catch { return null }`
-     * hid it). Throwing on a non-OK response surfaces a misconfigured
-     * asset path loudly instead. Returns null only when an otherwise
-     * OK response omits Content-Length.
+     * with no version prefix, which 404'd in every build and silently
+     * rendered a blank size (the `catch { return null }` hid it).
+     * Throwing on a non-OK response surfaces a misconfigured asset path
+     * loudly instead. Returns null only when an otherwise OK response
+     * omits Content-Length.
      */
     async modelSizeBytes(): Promise<number | null> {
         const m = await this.getManifest();
