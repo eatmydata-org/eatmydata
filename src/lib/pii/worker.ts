@@ -92,6 +92,7 @@ export class PiiAccessor {
     #readyAt = 0;
 
     async #boot(): Promise<TokenClassificationPipeline> {
+        debugger;
         this.#bootStartedAt = Date.now();
         // NOTE: keep this as a root-relative path, NOT a full URL.
         env.localModelPath = ASSET_BASE + '/';
