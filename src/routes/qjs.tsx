@@ -1,7 +1,7 @@
 import { createResource, createSignal, Show, type Component } from 'solid-js';
 import { Button } from '@/registry/ui/button';
 import { TopBar } from '@/components/top-bar';
-import { evalJS, initQJS } from '@/libs/qjs';
+import { evalJS, initQJS } from '@/lib/qjs';
 import { randomInt } from '@/lib/random';
 
 const SNIPPETS = [

@@ -1,6 +1,6 @@
 import { type Component, createEffect, createMemo, createSignal, For } from 'solid-js';
 import { paletteFor } from './entity-badge';
-import type { PiiEntity } from '@/lib/pii/client';
+import type { PiiEntity } from '@/lib/transformers/client';
 
 // Highlights are character-attached: each detector run is treated as a
 // rich-text "mark" set whose offsets travel with edits until the next
@@ -292,10 +292,10 @@ export const HighlightedTextarea: Component<{
                     if (!props.submitOn) return;
                     if (e.key !== 'Enter') return;
                     if (e.isComposing) return;
-                    if (props.submitOn === 'enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        submit();
-                    } else if (props.submitOn === 'cmd-enter' && (e.metaKey || e.ctrlKey)) {
+                    const enterSubmit = props.submitOn === 'enter' && !e.shiftKey;
+                    const cmdEnterSubmit =
+                        props.submitOn === 'cmd-enter' && (e.metaKey || e.ctrlKey);
+                    if (enterSubmit || cmdEnterSubmit) {
                         e.preventDefault();
                         submit();
                     }

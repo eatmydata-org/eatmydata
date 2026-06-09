@@ -40,109 +40,600 @@ const DEFAULTS = {
 type BrandSpec = { brand: string; models: readonly string[]; defaultCategory: string };
 
 const BRANDS: readonly BrandSpec[] = [
-    { brand: 'Nike',        models: ['Pegasus', 'Air Max', 'Air Force 1', 'React Infinity', 'Vaporfly', 'Blazer'], defaultCategory: 'sneakers' },
-    { brand: 'Adidas',      models: ['Ultraboost', 'NMD', 'Stan Smith', 'Samba', 'Gazelle', 'Adizero'],           defaultCategory: 'sneakers' },
-    { brand: 'Puma',        models: ['Suede', 'RS-X', 'Cell Endura', 'Cali', 'Future Rider'],                     defaultCategory: 'sneakers' },
-    { brand: 'New Balance', models: ['990', '574', '550', '327', '1080'],                                          defaultCategory: 'sneakers' },
-    { brand: 'Asics',       models: ['Gel-Kayano', 'Gel-Nimbus', 'Gel-Lyte', 'Novablast'],                         defaultCategory: 'running'  },
-    { brand: 'Brooks',      models: ['Ghost', 'Glycerin', 'Adrenaline', 'Levitate'],                               defaultCategory: 'running'  },
-    { brand: 'Hoka',        models: ['Clifton', 'Bondi', 'Mach', 'Speedgoat'],                                     defaultCategory: 'running'  },
-    { brand: 'Salomon',     models: ['Speedcross', 'X Ultra', 'XT-6'],                                              defaultCategory: 'hiking'   },
-    { brand: 'Reebok',      models: ['Classic Leather', 'Club C', 'Nano X', 'Zig Kinetica'],                       defaultCategory: 'sneakers' },
-    { brand: 'Vans',        models: ['Old Skool', 'Authentic', 'Era', 'Sk8-Hi'],                                   defaultCategory: 'casual'   },
-    { brand: 'Converse',    models: ['Chuck Taylor', 'Chuck 70', 'Run Star'],                                       defaultCategory: 'casual'   },
-    { brand: 'Skechers',    models: ['GO Walk', "D'Lites", 'Arch Fit'],                                             defaultCategory: 'casual'   },
-    { brand: 'Timberland',  models: ['6-inch Premium', 'Killington', 'Field Boot'],                                 defaultCategory: 'boots'    },
-    { brand: 'Dr. Martens', models: ['1460', '1461', 'Jadon'],                                                      defaultCategory: 'boots'    },
-    { brand: 'On',          models: ['Cloud', 'Cloudmonster', 'Cloudswift'],                                        defaultCategory: 'running'  },
-    { brand: 'Birkenstock', models: ['Arizona', 'Boston', 'Madrid'],                                                defaultCategory: 'sandals'  },
-    { brand: 'Allbirds',    models: ['Wool Runner', 'Tree Dasher', 'Tree Runner'],                                  defaultCategory: 'sneakers' },
+    {
+        brand: 'Nike',
+        models: ['Pegasus', 'Air Max', 'Air Force 1', 'React Infinity', 'Vaporfly', 'Blazer'],
+        defaultCategory: 'sneakers',
+    },
+    {
+        brand: 'Adidas',
+        models: ['Ultraboost', 'NMD', 'Stan Smith', 'Samba', 'Gazelle', 'Adizero'],
+        defaultCategory: 'sneakers',
+    },
+    {
+        brand: 'Puma',
+        models: ['Suede', 'RS-X', 'Cell Endura', 'Cali', 'Future Rider'],
+        defaultCategory: 'sneakers',
+    },
+    {
+        brand: 'New Balance',
+        models: ['990', '574', '550', '327', '1080'],
+        defaultCategory: 'sneakers',
+    },
+    {
+        brand: 'Asics',
+        models: ['Gel-Kayano', 'Gel-Nimbus', 'Gel-Lyte', 'Novablast'],
+        defaultCategory: 'running',
+    },
+    {
+        brand: 'Brooks',
+        models: ['Ghost', 'Glycerin', 'Adrenaline', 'Levitate'],
+        defaultCategory: 'running',
+    },
+    {
+        brand: 'Hoka',
+        models: ['Clifton', 'Bondi', 'Mach', 'Speedgoat'],
+        defaultCategory: 'running',
+    },
+    { brand: 'Salomon', models: ['Speedcross', 'X Ultra', 'XT-6'], defaultCategory: 'hiking' },
+    {
+        brand: 'Reebok',
+        models: ['Classic Leather', 'Club C', 'Nano X', 'Zig Kinetica'],
+        defaultCategory: 'sneakers',
+    },
+    {
+        brand: 'Vans',
+        models: ['Old Skool', 'Authentic', 'Era', 'Sk8-Hi'],
+        defaultCategory: 'casual',
+    },
+    {
+        brand: 'Converse',
+        models: ['Chuck Taylor', 'Chuck 70', 'Run Star'],
+        defaultCategory: 'casual',
+    },
+    { brand: 'Skechers', models: ['GO Walk', "D'Lites", 'Arch Fit'], defaultCategory: 'casual' },
+    {
+        brand: 'Timberland',
+        models: ['6-inch Premium', 'Killington', 'Field Boot'],
+        defaultCategory: 'boots',
+    },
+    { brand: 'Dr. Martens', models: ['1460', '1461', 'Jadon'], defaultCategory: 'boots' },
+    { brand: 'On', models: ['Cloud', 'Cloudmonster', 'Cloudswift'], defaultCategory: 'running' },
+    { brand: 'Birkenstock', models: ['Arizona', 'Boston', 'Madrid'], defaultCategory: 'sandals' },
+    {
+        brand: 'Allbirds',
+        models: ['Wool Runner', 'Tree Dasher', 'Tree Runner'],
+        defaultCategory: 'sneakers',
+    },
 ];
 
 const CATEGORIES = ['running', 'sneakers', 'casual', 'hiking', 'boots', 'sandals'] as const;
 const GENDERS = ['men', 'women', 'unisex', 'kids'] as const;
-const COLORS = ['Black','White','Grey','Navy','Red','Blue','Green','Pink','Beige','Brown','Olive','Charcoal','Cream','Yellow','Orange'] as const;
-const MATERIALS = ['Mesh','Leather','Suede','Canvas','Synthetic','Knit','Nubuck','Recycled'] as const;
-const SHOE_SIZES = [4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13] as const;
+const COLORS = [
+    'Black',
+    'White',
+    'Grey',
+    'Navy',
+    'Red',
+    'Blue',
+    'Green',
+    'Pink',
+    'Beige',
+    'Brown',
+    'Olive',
+    'Charcoal',
+    'Cream',
+    'Yellow',
+    'Orange',
+] as const;
+const MATERIALS = [
+    'Mesh',
+    'Leather',
+    'Suede',
+    'Canvas',
+    'Synthetic',
+    'Knit',
+    'Nubuck',
+    'Recycled',
+] as const;
+const SHOE_SIZES = [
+    4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13,
+] as const;
 
 const WAREHOUSES = [
-    { code: 'NYC01', name: 'New York Distribution Center', city: 'New York',     country: 'USA' },
-    { code: 'LAX01', name: 'Los Angeles Fulfillment',      city: 'Los Angeles',  country: 'USA' },
-    { code: 'CHI01', name: 'Chicago Hub',                  city: 'Chicago',      country: 'USA' },
-    { code: 'ATL01', name: 'Atlanta South Hub',            city: 'Atlanta',      country: 'USA' },
-    { code: 'DAL01', name: 'Dallas Cross-dock',            city: 'Dallas',       country: 'USA' },
-    { code: 'YYZ01', name: 'Toronto Logistics',            city: 'Toronto',      country: 'Canada' },
-    { code: 'YVR01', name: 'Vancouver West Coast',         city: 'Vancouver',    country: 'Canada' },
-    { code: 'LHR01', name: 'London Heathrow Depot',        city: 'London',       country: 'UK' },
-    { code: 'FRA01', name: 'Frankfurt Central',            city: 'Frankfurt',    country: 'Germany' },
-    { code: 'CDG01', name: 'Paris Fulfillment',            city: 'Paris',        country: 'France' },
-    { code: 'AMS01', name: 'Amsterdam Schiphol Depot',     city: 'Amsterdam',    country: 'Netherlands' },
-    { code: 'BCN01', name: 'Barcelona Mediterranean',      city: 'Barcelona',    country: 'Spain' },
-    { code: 'MIL01', name: 'Milan Distribution',           city: 'Milan',        country: 'Italy' },
-    { code: 'NRT01', name: 'Tokyo Narita Hub',             city: 'Tokyo',        country: 'Japan' },
-    { code: 'SYD01', name: 'Sydney Fulfillment',           city: 'Sydney',       country: 'Australia' },
-    { code: 'GRU01', name: 'São Paulo South America',      city: 'São Paulo',    country: 'Brazil' },
-    { code: 'MEX01', name: 'Mexico City Central',          city: 'Mexico City',  country: 'Mexico' },
+    { code: 'NYC01', name: 'New York Distribution Center', city: 'New York', country: 'USA' },
+    { code: 'LAX01', name: 'Los Angeles Fulfillment', city: 'Los Angeles', country: 'USA' },
+    { code: 'CHI01', name: 'Chicago Hub', city: 'Chicago', country: 'USA' },
+    { code: 'ATL01', name: 'Atlanta South Hub', city: 'Atlanta', country: 'USA' },
+    { code: 'DAL01', name: 'Dallas Cross-dock', city: 'Dallas', country: 'USA' },
+    { code: 'YYZ01', name: 'Toronto Logistics', city: 'Toronto', country: 'Canada' },
+    { code: 'YVR01', name: 'Vancouver West Coast', city: 'Vancouver', country: 'Canada' },
+    { code: 'LHR01', name: 'London Heathrow Depot', city: 'London', country: 'UK' },
+    { code: 'FRA01', name: 'Frankfurt Central', city: 'Frankfurt', country: 'Germany' },
+    { code: 'CDG01', name: 'Paris Fulfillment', city: 'Paris', country: 'France' },
+    { code: 'AMS01', name: 'Amsterdam Schiphol Depot', city: 'Amsterdam', country: 'Netherlands' },
+    { code: 'BCN01', name: 'Barcelona Mediterranean', city: 'Barcelona', country: 'Spain' },
+    { code: 'MIL01', name: 'Milan Distribution', city: 'Milan', country: 'Italy' },
+    { code: 'NRT01', name: 'Tokyo Narita Hub', city: 'Tokyo', country: 'Japan' },
+    { code: 'SYD01', name: 'Sydney Fulfillment', city: 'Sydney', country: 'Australia' },
+    { code: 'GRU01', name: 'São Paulo South America', city: 'São Paulo', country: 'Brazil' },
+    { code: 'MEX01', name: 'Mexico City Central', city: 'Mexico City', country: 'Mexico' },
 ];
 
 const FIRST_NAMES = [
-    'Olivia','Liam','Emma','Noah','Ava','Elijah','Sophia','James','Isabella','William',
-    'Mia','Lucas','Charlotte','Mason','Amelia','Logan','Harper','Ethan','Evelyn','Aiden',
-    'Abigail','Sebastian','Ella','Carter','Ellie','Henry','Avery','Owen','Scarlett','Daniel',
-    'Grace','Jackson','Chloe','Wyatt','Victoria','David','Riley','Joseph','Aria','Samuel',
-    'Lily','Levi','Aubrey','Jack','Zoey','Andrew','Mila','Anthony','Hannah','Joshua',
-    'Layla','Christopher','Brooklyn','Dylan','Penelope','Asher','Camila','John','Stella','Caleb',
-    'Aaliyah','Isaiah','Maya','Adam','Sara','Eli','Naomi','Hudson','Audrey','Jeremiah',
-    'Skylar','Jayden','Genesis','Connor','Ariana','Lincoln','Eleanor','Greyson','Hazel','Robert',
-    'Ruby','Jonathan','Eva','Cameron','Nora','Ezekiel','Madeline','Roman','Sadie','Easton',
-    'Cora','Theodore','Aurora','Aaron','Madison','Jaxon','Quinn','Nathan','Paisley','Maverick',
-    'Diego','Mateo','Ivan','Pablo','Camila','Jose','Lucia','Sofia','Daniela','Manuel',
-    'Hiroshi','Yuki','Aiko','Takeshi','Sakura','Haruto','Yui','Ren','Aoi','Sora',
-    'Liam','Niamh','Cian','Aoife','Eoin','Saoirse','Conor','Sinead','Padraig','Roisin',
+    'Olivia',
+    'Liam',
+    'Emma',
+    'Noah',
+    'Ava',
+    'Elijah',
+    'Sophia',
+    'James',
+    'Isabella',
+    'William',
+    'Mia',
+    'Lucas',
+    'Charlotte',
+    'Mason',
+    'Amelia',
+    'Logan',
+    'Harper',
+    'Ethan',
+    'Evelyn',
+    'Aiden',
+    'Abigail',
+    'Sebastian',
+    'Ella',
+    'Carter',
+    'Ellie',
+    'Henry',
+    'Avery',
+    'Owen',
+    'Scarlett',
+    'Daniel',
+    'Grace',
+    'Jackson',
+    'Chloe',
+    'Wyatt',
+    'Victoria',
+    'David',
+    'Riley',
+    'Joseph',
+    'Aria',
+    'Samuel',
+    'Lily',
+    'Levi',
+    'Aubrey',
+    'Jack',
+    'Zoey',
+    'Andrew',
+    'Mila',
+    'Anthony',
+    'Hannah',
+    'Joshua',
+    'Layla',
+    'Christopher',
+    'Brooklyn',
+    'Dylan',
+    'Penelope',
+    'Asher',
+    'Camila',
+    'John',
+    'Stella',
+    'Caleb',
+    'Aaliyah',
+    'Isaiah',
+    'Maya',
+    'Adam',
+    'Sara',
+    'Eli',
+    'Naomi',
+    'Hudson',
+    'Audrey',
+    'Jeremiah',
+    'Skylar',
+    'Jayden',
+    'Genesis',
+    'Connor',
+    'Ariana',
+    'Lincoln',
+    'Eleanor',
+    'Greyson',
+    'Hazel',
+    'Robert',
+    'Ruby',
+    'Jonathan',
+    'Eva',
+    'Cameron',
+    'Nora',
+    'Ezekiel',
+    'Madeline',
+    'Roman',
+    'Sadie',
+    'Easton',
+    'Cora',
+    'Theodore',
+    'Aurora',
+    'Aaron',
+    'Madison',
+    'Jaxon',
+    'Quinn',
+    'Nathan',
+    'Paisley',
+    'Maverick',
+    'Diego',
+    'Mateo',
+    'Ivan',
+    'Pablo',
+    'Camila',
+    'Jose',
+    'Lucia',
+    'Sofia',
+    'Daniela',
+    'Manuel',
+    'Hiroshi',
+    'Yuki',
+    'Aiko',
+    'Takeshi',
+    'Sakura',
+    'Haruto',
+    'Yui',
+    'Ren',
+    'Aoi',
+    'Sora',
+    'Liam',
+    'Niamh',
+    'Cian',
+    'Aoife',
+    'Eoin',
+    'Saoirse',
+    'Conor',
+    'Sinead',
+    'Padraig',
+    'Roisin',
 ];
 
 const LAST_NAMES = [
-    'Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
-    'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin',
-    'Lee','Perez','Thompson','White','Harris','Sanchez','Clark','Ramirez','Lewis','Robinson',
-    'Walker','Young','Allen','King','Wright','Scott','Torres','Nguyen','Hill','Flores',
-    'Green','Adams','Nelson','Baker','Hall','Rivera','Campbell','Mitchell','Carter','Roberts',
-    'Gomez','Phillips','Evans','Turner','Diaz','Parker','Cruz','Edwards','Collins','Reyes',
-    'Stewart','Morris','Morales','Murphy','Cook','Rogers','Gutierrez','Ortiz','Morgan','Cooper',
-    'Peterson','Bailey','Reed','Kelly','Howard','Ramos','Kim','Cox','Ward','Richardson',
-    'Watson','Brooks','Chavez','Wood','James','Bennett','Gray','Mendoza','Ruiz','Hughes',
-    'Price','Alvarez','Castillo','Sanders','Patel','Myers','Long','Ross','Foster','Jimenez',
-    'O\'Connor','Doyle','Ryan','McCarthy','Murphy','Walsh','Byrne','Kelly',
-    'Yamamoto','Sato','Suzuki','Takahashi','Tanaka','Watanabe','Ito','Yamada',
-    'Schmidt','Müller','Schneider','Fischer','Weber','Meyer','Wagner','Becker',
-    'Dubois','Moreau','Laurent','Simon','Michel','Lefebvre','Leroy','Roux',
-    'Rossi','Russo','Bianchi','Romano','Colombo','Ricci','Marino','Greco',
+    'Smith',
+    'Johnson',
+    'Williams',
+    'Brown',
+    'Jones',
+    'Garcia',
+    'Miller',
+    'Davis',
+    'Rodriguez',
+    'Martinez',
+    'Hernandez',
+    'Lopez',
+    'Gonzalez',
+    'Wilson',
+    'Anderson',
+    'Thomas',
+    'Taylor',
+    'Moore',
+    'Jackson',
+    'Martin',
+    'Lee',
+    'Perez',
+    'Thompson',
+    'White',
+    'Harris',
+    'Sanchez',
+    'Clark',
+    'Ramirez',
+    'Lewis',
+    'Robinson',
+    'Walker',
+    'Young',
+    'Allen',
+    'King',
+    'Wright',
+    'Scott',
+    'Torres',
+    'Nguyen',
+    'Hill',
+    'Flores',
+    'Green',
+    'Adams',
+    'Nelson',
+    'Baker',
+    'Hall',
+    'Rivera',
+    'Campbell',
+    'Mitchell',
+    'Carter',
+    'Roberts',
+    'Gomez',
+    'Phillips',
+    'Evans',
+    'Turner',
+    'Diaz',
+    'Parker',
+    'Cruz',
+    'Edwards',
+    'Collins',
+    'Reyes',
+    'Stewart',
+    'Morris',
+    'Morales',
+    'Murphy',
+    'Cook',
+    'Rogers',
+    'Gutierrez',
+    'Ortiz',
+    'Morgan',
+    'Cooper',
+    'Peterson',
+    'Bailey',
+    'Reed',
+    'Kelly',
+    'Howard',
+    'Ramos',
+    'Kim',
+    'Cox',
+    'Ward',
+    'Richardson',
+    'Watson',
+    'Brooks',
+    'Chavez',
+    'Wood',
+    'James',
+    'Bennett',
+    'Gray',
+    'Mendoza',
+    'Ruiz',
+    'Hughes',
+    'Price',
+    'Alvarez',
+    'Castillo',
+    'Sanders',
+    'Patel',
+    'Myers',
+    'Long',
+    'Ross',
+    'Foster',
+    'Jimenez',
+    "O'Connor",
+    'Doyle',
+    'Ryan',
+    'McCarthy',
+    'Murphy',
+    'Walsh',
+    'Byrne',
+    'Kelly',
+    'Yamamoto',
+    'Sato',
+    'Suzuki',
+    'Takahashi',
+    'Tanaka',
+    'Watanabe',
+    'Ito',
+    'Yamada',
+    'Schmidt',
+    'Müller',
+    'Schneider',
+    'Fischer',
+    'Weber',
+    'Meyer',
+    'Wagner',
+    'Becker',
+    'Dubois',
+    'Moreau',
+    'Laurent',
+    'Simon',
+    'Michel',
+    'Lefebvre',
+    'Leroy',
+    'Roux',
+    'Rossi',
+    'Russo',
+    'Bianchi',
+    'Romano',
+    'Colombo',
+    'Ricci',
+    'Marino',
+    'Greco',
 ];
 
 const COUNTRIES: ReadonlyArray<readonly [string, readonly string[]]> = [
-    ['USA',       ['New York','Los Angeles','Chicago','Houston','Phoenix','Philadelphia','San Antonio','San Diego','Dallas','San Jose','Austin','Jacksonville','Fort Worth','Columbus','Seattle','Denver','Boston','Nashville','Portland','Las Vegas']],
-    ['Canada',    ['Toronto','Vancouver','Montreal','Calgary','Ottawa','Edmonton','Winnipeg','Quebec City','Halifax','Victoria']],
-    ['UK',        ['London','Manchester','Birmingham','Leeds','Glasgow','Edinburgh','Bristol','Liverpool','Nottingham','Sheffield']],
-    ['Germany',   ['Berlin','Munich','Hamburg','Cologne','Frankfurt','Stuttgart','Düsseldorf','Leipzig','Dortmund','Bremen']],
-    ['France',    ['Paris','Marseille','Lyon','Toulouse','Nice','Nantes','Strasbourg','Montpellier','Bordeaux','Lille']],
-    ['Spain',     ['Madrid','Barcelona','Valencia','Seville','Zaragoza','Málaga','Murcia','Palma','Bilbao','Granada']],
-    ['Italy',     ['Rome','Milan','Naples','Turin','Palermo','Genoa','Bologna','Florence','Verona','Venice']],
-    ['Japan',     ['Tokyo','Yokohama','Osaka','Nagoya','Sapporo','Fukuoka','Kobe','Kyoto','Kawasaki','Saitama']],
-    ['Australia', ['Sydney','Melbourne','Brisbane','Perth','Adelaide','Canberra','Hobart','Darwin','Newcastle','Wollongong']],
-    ['Brazil',    ['São Paulo','Rio de Janeiro','Brasília','Salvador','Fortaleza','Belo Horizonte','Manaus','Curitiba','Recife','Porto Alegre']],
-    ['Mexico',    ['Mexico City','Guadalajara','Monterrey','Puebla','Tijuana','León','Juárez','Zapopan','Mérida','Cancún']],
+    [
+        'USA',
+        [
+            'New York',
+            'Los Angeles',
+            'Chicago',
+            'Houston',
+            'Phoenix',
+            'Philadelphia',
+            'San Antonio',
+            'San Diego',
+            'Dallas',
+            'San Jose',
+            'Austin',
+            'Jacksonville',
+            'Fort Worth',
+            'Columbus',
+            'Seattle',
+            'Denver',
+            'Boston',
+            'Nashville',
+            'Portland',
+            'Las Vegas',
+        ],
+    ],
+    [
+        'Canada',
+        [
+            'Toronto',
+            'Vancouver',
+            'Montreal',
+            'Calgary',
+            'Ottawa',
+            'Edmonton',
+            'Winnipeg',
+            'Quebec City',
+            'Halifax',
+            'Victoria',
+        ],
+    ],
+    [
+        'UK',
+        [
+            'London',
+            'Manchester',
+            'Birmingham',
+            'Leeds',
+            'Glasgow',
+            'Edinburgh',
+            'Bristol',
+            'Liverpool',
+            'Nottingham',
+            'Sheffield',
+        ],
+    ],
+    [
+        'Germany',
+        [
+            'Berlin',
+            'Munich',
+            'Hamburg',
+            'Cologne',
+            'Frankfurt',
+            'Stuttgart',
+            'Düsseldorf',
+            'Leipzig',
+            'Dortmund',
+            'Bremen',
+        ],
+    ],
+    [
+        'France',
+        [
+            'Paris',
+            'Marseille',
+            'Lyon',
+            'Toulouse',
+            'Nice',
+            'Nantes',
+            'Strasbourg',
+            'Montpellier',
+            'Bordeaux',
+            'Lille',
+        ],
+    ],
+    [
+        'Spain',
+        [
+            'Madrid',
+            'Barcelona',
+            'Valencia',
+            'Seville',
+            'Zaragoza',
+            'Málaga',
+            'Murcia',
+            'Palma',
+            'Bilbao',
+            'Granada',
+        ],
+    ],
+    [
+        'Italy',
+        [
+            'Rome',
+            'Milan',
+            'Naples',
+            'Turin',
+            'Palermo',
+            'Genoa',
+            'Bologna',
+            'Florence',
+            'Verona',
+            'Venice',
+        ],
+    ],
+    [
+        'Japan',
+        [
+            'Tokyo',
+            'Yokohama',
+            'Osaka',
+            'Nagoya',
+            'Sapporo',
+            'Fukuoka',
+            'Kobe',
+            'Kyoto',
+            'Kawasaki',
+            'Saitama',
+        ],
+    ],
+    [
+        'Australia',
+        [
+            'Sydney',
+            'Melbourne',
+            'Brisbane',
+            'Perth',
+            'Adelaide',
+            'Canberra',
+            'Hobart',
+            'Darwin',
+            'Newcastle',
+            'Wollongong',
+        ],
+    ],
+    [
+        'Brazil',
+        [
+            'São Paulo',
+            'Rio de Janeiro',
+            'Brasília',
+            'Salvador',
+            'Fortaleza',
+            'Belo Horizonte',
+            'Manaus',
+            'Curitiba',
+            'Recife',
+            'Porto Alegre',
+        ],
+    ],
+    [
+        'Mexico',
+        [
+            'Mexico City',
+            'Guadalajara',
+            'Monterrey',
+            'Puebla',
+            'Tijuana',
+            'León',
+            'Juárez',
+            'Zapopan',
+            'Mérida',
+            'Cancún',
+        ],
+    ],
 ];
 
 const CHANNELS = ['web', 'mobile', 'in_store', 'partner', 'marketplace'] as const;
 
-const ORDER_STATUSES = ['delivered', 'shipped', 'paid', 'cancelled', 'pending', 'refunded'] as const;
+const ORDER_STATUSES = [
+    'delivered',
+    'shipped',
+    'paid',
+    'cancelled',
+    'pending',
+    'refunded',
+] as const;
 const STATUS_WEIGHTS_DEFAULT = [0.62, 0.15, 0.08, 0.07, 0.05, 0.03] as const;
 const STATUS_WEIGHTS_PARTNER = [0.46, 0.13, 0.07, 0.21, 0.05, 0.08] as const;
 
 const LOYALTY_TIERS = ['bronze', 'silver', 'gold', 'platinum'] as const;
-const LOYALTY_ASSIGNMENT_WEIGHTS = [0.65, 0.22, 0.10, 0.03] as const;
+const LOYALTY_ASSIGNMENT_WEIGHTS = [0.65, 0.22, 0.1, 0.03] as const;
 const LOYALTY_PICK_WEIGHT: Record<string, number> = {
-    bronze: 1.0, silver: 1.5, gold: 2.5, platinum: 5.0,
+    bronze: 1.0,
+    silver: 1.5,
+    gold: 2.5,
+    platinum: 5.0,
 };
 
 const LINE_COUNTS = [1, 2, 3, 4] as const;
@@ -151,16 +642,30 @@ const LINE_COUNT_WEIGHTS = [0.55, 0.28, 0.12, 0.05] as const;
 const QUANTITIES = [1, 2, 3] as const;
 const QUANTITY_WEIGHTS = [0.78, 0.18, 0.04] as const;
 
-const RETURN_REASONS = ['wrong_size','defective','did_not_like','late_delivery','color_mismatch','comfort','other'] as const;
-const RETURN_REASON_WEIGHTS_BOOTS = [0.55, 0.10, 0.10, 0.05, 0.10, 0.05, 0.05] as const;
+const RETURN_REASONS = [
+    'wrong_size',
+    'defective',
+    'did_not_like',
+    'late_delivery',
+    'color_mismatch',
+    'comfort',
+    'other',
+] as const;
+const RETURN_REASON_WEIGHTS_BOOTS = [0.55, 0.1, 0.1, 0.05, 0.1, 0.05, 0.05] as const;
 
-const CLAIM_CATEGORIES = ['warranty','quality','shipping_damage','sizing_issue','customer_service'] as const;
-const CLAIM_CATEGORY_WEIGHTS_SKECHERS = [0.45, 0.40, 0.05, 0.05, 0.05] as const;
-const CLAIM_SEVERITIES = ['low','medium','high'] as const;
+const CLAIM_CATEGORIES = [
+    'warranty',
+    'quality',
+    'shipping_damage',
+    'sizing_issue',
+    'customer_service',
+] as const;
+const CLAIM_CATEGORY_WEIGHTS_SKECHERS = [0.45, 0.4, 0.05, 0.05, 0.05] as const;
+const CLAIM_SEVERITIES = ['low', 'medium', 'high'] as const;
 const CLAIM_SEVERITY_WEIGHTS_DEFAULT = [0.55, 0.32, 0.13] as const;
-const CLAIM_SEVERITY_WEIGHTS_SKECHERS = [0.20, 0.45, 0.35] as const;
-const CLAIM_STATUSES = ['open','in_review','resolved','rejected'] as const;
-const CLAIM_STATUS_WEIGHTS = [0.10, 0.18, 0.60, 0.12] as const;
+const CLAIM_SEVERITY_WEIGHTS_SKECHERS = [0.2, 0.45, 0.35] as const;
+const CLAIM_STATUSES = ['open', 'in_review', 'resolved', 'rejected'] as const;
+const CLAIM_STATUS_WEIGHTS = [0.1, 0.18, 0.6, 0.12] as const;
 
 const CLAIM_TEMPLATES: Record<string, readonly string[]> = {
     warranty: [
@@ -229,44 +734,74 @@ const CLAIM_TEMPLATES: Record<string, readonly string[]> = {
 // ---------------------------------------------------------------------------
 
 const BRAND_POPULARITY: Record<string, number> = {
-    Nike: 0.26, Adidas: 0.18, 'New Balance': 0.09, Asics: 0.07, Puma: 0.06,
-    Vans: 0.06, Converse: 0.05, Brooks: 0.04, Hoka: 0.04, Reebok: 0.03,
-    'Dr. Martens': 0.03, Skechers: 0.03, Timberland: 0.025, Salomon: 0.02,
-    On: 0.02, Birkenstock: 0.015, Allbirds: 0.015,
+    Nike: 0.26,
+    Adidas: 0.18,
+    'New Balance': 0.09,
+    Asics: 0.07,
+    Puma: 0.06,
+    Vans: 0.06,
+    Converse: 0.05,
+    Brooks: 0.04,
+    Hoka: 0.04,
+    Reebok: 0.03,
+    'Dr. Martens': 0.03,
+    Skechers: 0.03,
+    Timberland: 0.025,
+    Salomon: 0.02,
+    On: 0.02,
+    Birkenstock: 0.015,
+    Allbirds: 0.015,
 };
 
 const COLOR_POPULARITY: Record<string, number> = {
-    Black: 4.0, White: 4.0, Grey: 2.5, Navy: 2.0, Brown: 1.5, Red: 1.5,
-    Blue: 1.5, Charcoal: 1.2, Pink: 1.2, Beige: 1.0, Green: 1.0, Cream: 1.0,
-    Olive: 0.6, Yellow: 0.4, Orange: 0.4,
+    Black: 4.0,
+    White: 4.0,
+    Grey: 2.5,
+    Navy: 2.0,
+    Brown: 1.5,
+    Red: 1.5,
+    Blue: 1.5,
+    Charcoal: 1.2,
+    Pink: 1.2,
+    Beige: 1.0,
+    Green: 1.0,
+    Cream: 1.0,
+    Olive: 0.6,
+    Yellow: 0.4,
+    Orange: 0.4,
 };
 
 const SEASONALITY: Record<string, readonly number[]> = {
-    running:  [2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.5, 1.0, 1.0, 1.0],
+    running: [2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.5, 1.0, 1.0, 1.0],
     sneakers: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.0, 1.0, 1.1],
-    casual:   [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-    hiking:   [0.8, 0.7, 0.9, 1.1, 1.2, 1.0, 0.9, 0.9, 1.2, 1.5, 2.0, 2.0],
-    boots:    [3.0, 2.0, 1.2, 0.6, 0.4, 0.3, 0.3, 0.3, 0.8, 1.6, 2.6, 3.2],
-    sandals:  [0.4, 0.4, 0.6, 1.5, 2.5, 3.2, 3.5, 3.0, 1.5, 0.6, 0.4, 0.4],
+    casual: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    hiking: [0.8, 0.7, 0.9, 1.1, 1.2, 1.0, 0.9, 0.9, 1.2, 1.5, 2.0, 2.0],
+    boots: [3.0, 2.0, 1.2, 0.6, 0.4, 0.3, 0.3, 0.3, 0.8, 1.6, 2.6, 3.2],
+    sandals: [0.4, 0.4, 0.6, 1.5, 2.5, 3.2, 3.5, 3.0, 1.5, 0.6, 0.4, 0.4],
 };
 
 const CHANNEL_WEIGHTS_BY_COUNTRY: Record<string, readonly number[]> = {
-    USA:       [0.40, 0.28, 0.22, 0.05, 0.05],
-    Canada:    [0.50, 0.30, 0.10, 0.05, 0.05],
-    UK:        [0.50, 0.30, 0.10, 0.05, 0.05],
-    Germany:   [0.60, 0.22, 0.10, 0.04, 0.04],
-    France:    [0.55, 0.25, 0.10, 0.05, 0.05],
-    Spain:     [0.45, 0.30, 0.10, 0.07, 0.08],
-    Italy:     [0.45, 0.30, 0.10, 0.07, 0.08],
-    Japan:     [0.20, 0.60, 0.10, 0.05, 0.05],
-    Australia: [0.45, 0.30, 0.10, 0.07, 0.08],
-    Brazil:    [0.30, 0.25, 0.10, 0.10, 0.25],
-    Mexico:    [0.30, 0.25, 0.10, 0.10, 0.25],
+    USA: [0.4, 0.28, 0.22, 0.05, 0.05],
+    Canada: [0.5, 0.3, 0.1, 0.05, 0.05],
+    UK: [0.5, 0.3, 0.1, 0.05, 0.05],
+    Germany: [0.6, 0.22, 0.1, 0.04, 0.04],
+    France: [0.55, 0.25, 0.1, 0.05, 0.05],
+    Spain: [0.45, 0.3, 0.1, 0.07, 0.08],
+    Italy: [0.45, 0.3, 0.1, 0.07, 0.08],
+    Japan: [0.2, 0.6, 0.1, 0.05, 0.05],
+    Australia: [0.45, 0.3, 0.1, 0.07, 0.08],
+    Brazil: [0.3, 0.25, 0.1, 0.1, 0.25],
+    Mexico: [0.3, 0.25, 0.1, 0.1, 0.25],
 };
-const CHANNEL_WEIGHTS_FALLBACK = [0.45, 0.30, 0.10, 0.08, 0.07] as const;
+const CHANNEL_WEIGHTS_FALLBACK = [0.45, 0.3, 0.1, 0.08, 0.07] as const;
 
 const RETURN_RATE_BY_CATEGORY: Record<string, number> = {
-    boots: 0.12, hiking: 0.08, sneakers: 0.07, casual: 0.05, running: 0.05, sandals: 0.03,
+    boots: 0.12,
+    hiking: 0.08,
+    sneakers: 0.07,
+    casual: 0.05,
+    running: 0.05,
+    sandals: 0.03,
 };
 const RETURN_RATE_FALLBACK = 0.06;
 const RETURN_RATE_PLATINUM_FACTOR = 0.4;
@@ -276,20 +811,38 @@ const CLAIM_RATE_BASELINE = 0.025;
 
 const LAX01_WAREHOUSE_CODE = 'LAX01';
 const LAX01_SHRINKAGE_LOW = 0.75;
-const LAX01_SHRINKAGE_HIGH = 0.90;
+const LAX01_SHRINKAGE_HIGH = 0.9;
 
 const BF_WINDOW_DAYS_BEFORE = 1;
 const BF_WINDOW_DAYS_AFTER = 3;
 const DISCOUNT_PROB_BASELINE = 0.18;
 const DISCOUNT_PROB_BF = 0.55;
 
+// Data-entry noise. Curated catalog values (names, cities, claim templates)
+// are drawn from short fixed lists, so left untouched a column like
+// `first_name` has only ~120 distinct values across tens of thousands of
+// customers — categorical, not free text. `maybeTypo` keys in human-style
+// single-character edits at these rates to lift the *stored* values into
+// free-text territory (so semantic indexing and fuzzy/LIKE matching have
+// realistically dirty data to chew on) while leaving identifiers (sku, email,
+// codes) and join keys (country) pristine. See `maybeTypo`.
+const NAME_TYPO_RATE = 0.18; // first_name / last_name
+const CITY_TYPO_RATE = 0.12; // customers.city (no street address in schema)
+const CLAIM_TYPO_RATE = 0.6; // claims.description (free-text prose)
+
 // ---------------------------------------------------------------------------
 // Schema DDL — the on-disk schema is the public contract.
 // ---------------------------------------------------------------------------
 
 const TABLE_NAMES = [
-    'warehouses', 'products', 'stock', 'customers',
-    'orders', 'order_items', 'returns', 'claims',
+    'warehouses',
+    'products',
+    'stock',
+    'customers',
+    'orders',
+    'order_items',
+    'returns',
+    'claims',
 ] as const;
 
 const SCHEMA_SQL = `
@@ -456,6 +1009,107 @@ function intBetween(rng: Rng, min: number, max: number): number {
     return Math.floor(rng() * (max - min + 1)) + min;
 }
 
+// QWERTY adjacency — fuel for "fat-finger" substitutions/insertions so the
+// noise looks like real mis-keys ("Olivai", "Oliwia") rather than uniform
+// random letters. Lowercase only; case is restored at the call site.
+const QWERTY_NEIGHBORS: Record<string, string> = {
+    a: 'qwsz',
+    b: 'vghn',
+    c: 'xdfv',
+    d: 'serfcx',
+    e: 'wsdr',
+    f: 'drtgvc',
+    g: 'ftyhbv',
+    h: 'gyujnb',
+    i: 'ujko',
+    j: 'huikmn',
+    k: 'jiolm',
+    l: 'kop',
+    m: 'njk',
+    n: 'bhjm',
+    o: 'iklp',
+    p: 'ol',
+    q: 'wa',
+    r: 'edft',
+    s: 'awedxz',
+    t: 'rfgy',
+    u: 'yhji',
+    v: 'cfgb',
+    w: 'qase',
+    x: 'zsdc',
+    y: 'tghu',
+    z: 'asx',
+};
+
+/** A keyboard-adjacent letter to `ch`, preserving case; `ch` itself on miss. */
+function neighborKey(rng: Rng, ch: string): string {
+    const lower = ch.toLowerCase();
+    const neighbors = QWERTY_NEIGHBORS[lower];
+    if (!neighbors) return ch;
+    const repl = neighbors[Math.floor(rng() * neighbors.length)]!;
+    return ch === lower ? repl : repl.toUpperCase();
+}
+
+type TypoEdit = 'drop' | 'double' | 'transpose' | 'insert' | 'substitute';
+const TYPO_EDITS: readonly TypoEdit[] = ['drop', 'double', 'transpose', 'insert', 'substitute'];
+//                                        missed  stutter   swap-adj    extra    fat-finger
+const TYPO_EDIT_WEIGHTS = [0.26, 0.22, 0.18, 0.16, 0.18] as const;
+
+/** Apply a single human-style edit at a random letter of `chars`, in place. */
+function applyOneEdit(rng: Rng, chars: string[]): void {
+    const letterIdx: number[] = [];
+    for (let i = 0; i < chars.length; i++) {
+        if (/[A-Za-z]/.test(chars[i]!)) letterIdx.push(i);
+    }
+    if (letterIdx.length === 0) return; // nothing alphabetic to perturb
+    const edit = pickWeighted(rng, TYPO_EDITS, TYPO_EDIT_WEIGHTS);
+    const pos = letterIdx[Math.floor(rng() * letterIdx.length)]!;
+    switch (edit) {
+        case 'drop':
+            // Keep at least one letter so a word never vanishes entirely.
+            if (letterIdx.length > 1) chars.splice(pos, 1);
+            else chars.splice(pos, 0, chars[pos]!);
+            break;
+        case 'double':
+            chars.splice(pos, 0, chars[pos]!);
+            break;
+        case 'transpose': {
+            const next = pos + 1;
+            if (next < chars.length && /[A-Za-z]/.test(chars[next]!)) {
+                const tmp = chars[pos]!;
+                chars[pos] = chars[next]!;
+                chars[next] = tmp;
+            } else {
+                chars.splice(pos, 0, chars[pos]!); // no neighbor → stutter instead
+            }
+            break;
+        }
+        case 'insert':
+            chars.splice(pos + 1, 0, neighborKey(rng, chars[pos]!));
+            break;
+        case 'substitute':
+            chars[pos] = neighborKey(rng, chars[pos]!);
+            break;
+    }
+}
+
+/**
+ * With probability `rate`, return `text` perturbed by one (occasionally more,
+ * up to `maxEdits`) single-character edits — a dropped letter, a doubled
+ * letter, an adjacent transposition, a stray neighbor key, or a fat-finger
+ * substitution. Deterministic given `rng`. Only ASCII letters are touched, and
+ * only within words, so digits/punctuation/accented glyphs and the overall
+ * shape survive — safe for names and prose, NOT for identifiers.
+ */
+function maybeTypo(rng: Rng, text: string, rate: number, maxEdits = 1): string {
+    if (rng() >= rate) return text;
+    const chars = [...text];
+    let edits = 1;
+    while (edits < maxEdits && rng() < 0.4) edits++;
+    for (let e = 0; e < edits; e++) applyOneEdit(rng, chars);
+    return chars.join('');
+}
+
 function buildCdf(weights: readonly number[]): Float64Array {
     const cdf = new Float64Array(weights.length);
     let acc = 0;
@@ -484,8 +1138,8 @@ function sampleCdf(rng: Rng, cdf: Float64Array): number {
 
 const DAY_MS = 86_400_000;
 const SIGNUP_START_MS = Date.UTC(2022, 0, 1);
-const ORDER_START_MS  = Date.UTC(2024, 0, 1);
-const ORDER_END_MS    = Date.UTC(2026, 4, 28);
+const ORDER_START_MS = Date.UTC(2024, 0, 1);
+const ORDER_END_MS = Date.UTC(2026, 4, 28);
 
 function isoDate(ms: number): string {
     return new Date(ms).toISOString().slice(0, 10);
@@ -526,6 +1180,48 @@ interface OrderItemInfo {
     unit_price_cents: number;
 }
 
+interface OrderLine {
+    product: ProductInfo;
+    qty: number;
+    disc: number;
+}
+
+/**
+ * Generate the line items for a single order. Extracted from the order loop in
+ * `insertOrders` purely to keep that function under the cognitive-complexity
+ * budget — the `rng()` call sequence (per line: product CDF sample, quantity
+ * pick, then conditional discount-probability + discount-amount draws) is
+ * unchanged, so the deterministic output for a given seed is byte-identical.
+ */
+function buildOrderLines(
+    rng: Rng,
+    params: {
+        lines: number;
+        products: readonly ProductInfo[];
+        monthCdf: Float64Array;
+        discountProb: number;
+        discountFracBase: number;
+        discountFracSpan: number;
+    },
+): { lineRecords: OrderLine[]; subtotal: number } {
+    const { lines, products, monthCdf, discountProb, discountFracBase, discountFracSpan } = params;
+    const lineRecords: OrderLine[] = [];
+    let subtotal = 0;
+    for (let l = 0; l < lines; l++) {
+        const prodIdx = sampleCdf(rng, monthCdf);
+        const prod = products[prodIdx]!;
+        const qty = pickWeighted(rng, QUANTITIES, QUANTITY_WEIGHTS);
+        const lineGross = prod.price_cents * qty;
+        const disc =
+            rng() < discountProb
+                ? Math.floor(lineGross * (discountFracBase + rng() * discountFracSpan))
+                : 0;
+        subtotal += lineGross - disc;
+        lineRecords.push({ product: prod, qty, disc });
+    }
+    return { lineRecords, subtotal };
+}
+
 interface DayBucket {
     ms: number;
     month: number;
@@ -558,11 +1254,7 @@ async function execAll(sqlite3: SQLiteAPI, db: number, sql: string): Promise<voi
     await sqlite3.exec(db, sql);
 }
 
-async function scalar<T = unknown>(
-    sqlite3: SQLiteAPI,
-    db: number,
-    sql: string,
-): Promise<T | null> {
+async function scalar<T = unknown>(sqlite3: SQLiteAPI, db: number, sql: string): Promise<T | null> {
     let out: T | null = null;
     await sqlite3.exec(db, sql, (row) => {
         out = row[0] as T;
@@ -602,13 +1294,17 @@ export async function seedRetailWa(
 
         const customerTiers = new Array<string>(opts.customers);
         const customerCountries = new Array<string>(opts.customers);
-        await insertCustomers(
-            sqlite3, db, rng, opts.customers, customerTiers, customerCountries,
-        );
+        await insertCustomers(sqlite3, db, rng, opts.customers, customerTiers, customerCountries);
 
         const items = await insertOrders(
-            sqlite3, db, rng, opts.orders, products, numWarehouses,
-            customerTiers, customerCountries,
+            sqlite3,
+            db,
+            rng,
+            opts.orders,
+            products,
+            numWarehouses,
+            customerTiers,
+            customerCountries,
         );
 
         await insertReturns(sqlite3, db, rng, items);
@@ -622,11 +1318,7 @@ export async function seedRetailWa(
     return summarize(sqlite3, db, t0, true);
 }
 
-async function tableExists(
-    sqlite3: SQLiteAPI,
-    db: number,
-    name: string,
-): Promise<boolean> {
+async function tableExists(sqlite3: SQLiteAPI, db: number, name: string): Promise<boolean> {
     // PRAGMA doesn't bind; use a literal with escaping. Names come from the
     // hardcoded TABLE_NAMES list so injection isn't a concern here, but we
     // still defensively quote with single quotes.
@@ -697,7 +1389,10 @@ async function insertProducts(
                 const material = pick(rng, MATERIALS);
                 const category = rng() < 0.85 ? spec.defaultCategory : pick(rng, CATEGORIES);
 
-                const modelKey = model.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase();
+                const modelKey = model
+                    .replace(/[^A-Za-z0-9]/g, '')
+                    .slice(0, 4)
+                    .toUpperCase();
                 const sku = `${spec.brand.slice(0, 3).toUpperCase()}-${modelKey}-${gender[0]!.toUpperCase()}-${color.slice(0, 3).toUpperCase()}-${String(size).replace('.', '_')}`;
                 if (seen.has(sku)) continue;
                 seen.add(sku);
@@ -705,11 +1400,22 @@ async function insertProducts(
                 const priceDollars = 40 + intBetween(rng, 0, 220);
                 const price_cents = priceDollars * 100 - 1;
                 const cost_cents = Math.floor(price_cents * (0.35 + rng() * 0.25));
-                const created_at = isoDate(SIGNUP_START_MS + Math.floor(rng() * (ORDER_START_MS - SIGNUP_START_MS)));
+                const created_at = isoDate(
+                    SIGNUP_START_MS + Math.floor(rng() * (ORDER_START_MS - SIGNUP_START_MS)),
+                );
 
                 sqlite3.bind_collection(stmt, [
-                    sku, spec.brand, model, category, gender, color,
-                    size, material, price_cents, cost_cents, created_at,
+                    sku,
+                    spec.brand,
+                    model,
+                    category,
+                    gender,
+                    color,
+                    size,
+                    material,
+                    price_cents,
+                    cost_cents,
+                    created_at,
                 ]);
                 await sqlite3.step(stmt);
                 await sqlite3.reset(stmt);
@@ -740,11 +1446,16 @@ async function insertStock(
                     if (rng() >= 0.6) continue;
                     let onHand = intBetween(rng, 0, 250);
                     if (w === lax01Id) {
-                        const factor = LAX01_SHRINKAGE_LOW + rng() * (LAX01_SHRINKAGE_HIGH - LAX01_SHRINKAGE_LOW);
+                        const factor =
+                            LAX01_SHRINKAGE_LOW +
+                            rng() * (LAX01_SHRINKAGE_HIGH - LAX01_SHRINKAGE_LOW);
                         onHand = Math.floor(onHand * factor);
                     }
-                    const reserved = onHand === 0 ? 0 : intBetween(rng, 0, Math.max(1, Math.floor(onHand / 5)));
-                    const restock = isoDate(ORDER_START_MS + Math.floor(rng() * (ORDER_END_MS - ORDER_START_MS)));
+                    const reserved =
+                        onHand === 0 ? 0 : intBetween(rng, 0, Math.max(1, Math.floor(onHand / 5)));
+                    const restock = isoDate(
+                        ORDER_START_MS + Math.floor(rng() * (ORDER_END_MS - ORDER_START_MS)),
+                    );
                     sqlite3.bind_collection(stmt, [p, w, onHand, reserved, restock]);
                     await sqlite3.step(stmt);
                     await sqlite3.reset(stmt);
@@ -755,20 +1466,41 @@ async function insertStock(
 }
 
 const EMAIL_DOMAINS = [
-    'example.com','example.org','example.net','mail.example','demo.invalid',
-    'inbox.example','post.example','contoso-mail.example','fabrikam.example',
-    'northwindtraders.example','example.local','sample.example',
+    'example.com',
+    'example.org',
+    'example.net',
+    'mail.example',
+    'demo.invalid',
+    'inbox.example',
+    'post.example',
+    'contoso-mail.example',
+    'fabrikam.example',
+    'northwindtraders.example',
+    'example.local',
+    'sample.example',
 ] as const;
 
 function buildEmail(rng: Rng, fn: string, ln: string, i: number): string {
     const first = fn.toLowerCase().replace(/[^a-z]/g, '');
     const last = ln.toLowerCase().replace(/[^a-z]/g, '');
     const shape = Math.floor(rng() * 5);
-    const local = shape === 0 ? `${first}.${last}${i}`
-        : shape === 1 ? `${first}${last}${i}`
-        : shape === 2 ? `${first[0] ?? 'a'}${last}${i}`
-        : shape === 3 ? `${first}_${last}${i}`
-        : `${first}.${last[0] ?? 'a'}.${i}`;
+    let local: string;
+    switch (shape) {
+        case 0:
+            local = `${first}.${last}${i}`;
+            break;
+        case 1:
+            local = `${first}${last}${i}`;
+            break;
+        case 2:
+            local = `${first[0] ?? 'a'}${last}${i}`;
+            break;
+        case 3:
+            local = `${first}_${last}${i}`;
+            break;
+        default:
+            local = `${first}.${last[0] ?? 'a'}.${i}`;
+    }
     const domain = EMAIL_DOMAINS[Math.floor(rng() * EMAIL_DOMAINS.length)]!;
     return `${local}@${domain}`;
 }
@@ -788,13 +1520,22 @@ async function insertCustomers(
             'VALUES (?,?,?,?,?,?,?)',
         async (stmt) => {
             for (let i = 1; i <= target; i++) {
-                const fn = pick(rng, FIRST_NAMES);
-                const ln = pick(rng, LAST_NAMES);
+                const fnClean = pick(rng, FIRST_NAMES);
+                const lnClean = pick(rng, LAST_NAMES);
                 const [country, cities] = pick(rng, COUNTRIES);
-                const city = pick(rng, cities);
-                const email = buildEmail(rng, fn, ln, i);
-                const signup = isoDate(SIGNUP_START_MS + Math.floor(rng() * (ORDER_START_MS - SIGNUP_START_MS)));
+                const cityClean = pick(rng, cities);
+                // Email is a system-generated identifier — derive it from the
+                // clean names (and `i` keeps it UNIQUE) so it stays pristine.
+                const email = buildEmail(rng, fnClean, lnClean, i);
+                const signup = isoDate(
+                    SIGNUP_START_MS + Math.floor(rng() * (ORDER_START_MS - SIGNUP_START_MS)),
+                );
                 const tier = pickWeighted(rng, LOYALTY_TIERS, LOYALTY_ASSIGNMENT_WEIGHTS);
+                // Dirty the human-entered fields; leave `country` (a join/group
+                // key, drives channel mix downstream) clean.
+                const fn = maybeTypo(rng, fnClean, NAME_TYPO_RATE);
+                const ln = maybeTypo(rng, lnClean, NAME_TYPO_RATE);
+                const city = maybeTypo(rng, cityClean, CITY_TYPO_RATE);
                 sqlite3.bind_collection(stmt, [email, fn, ln, city, country, signup, tier]);
                 await sqlite3.step(stmt);
                 await sqlite3.reset(stmt);
@@ -885,8 +1626,10 @@ async function insertOrders(
                 'INSERT INTO order_items (order_id, product_id, quantity, unit_price_cents, discount_cents) ' +
                     'VALUES (?,?,?,?,?)',
                 async (itemStmt) => {
-                    const productBaseWeights = products.map((p) =>
-                        (BRAND_POPULARITY[p.brand] ?? 0.01) * (COLOR_POPULARITY[p.color] ?? 1.0),
+                    const productBaseWeights = products.map(
+                        (p) =>
+                            (BRAND_POPULARITY[p.brand] ?? 0.01) *
+                            (COLOR_POPULARITY[p.color] ?? 1.0),
                     );
                     const customerWeights = customerTiers.map((t) => LOYALTY_PICK_WEIGHT[t] ?? 1.0);
                     const customerCdf = buildCdf(customerWeights);
@@ -905,41 +1648,43 @@ async function insertOrders(
                         const dateMs = day.ms + Math.floor(rng() * DAY_MS);
                         const orderDate = isoDateTime(dateMs);
 
-                        const channelWeights = CHANNEL_WEIGHTS_BY_COUNTRY[country] ?? CHANNEL_WEIGHTS_FALLBACK;
+                        const channelWeights =
+                            CHANNEL_WEIGHTS_BY_COUNTRY[country] ?? CHANNEL_WEIGHTS_FALLBACK;
                         const channel = pickWeighted(rng, CHANNELS, channelWeights);
-                        const statusWeights = channel === 'partner' ? STATUS_WEIGHTS_PARTNER : STATUS_WEIGHTS_DEFAULT;
+                        const statusWeights =
+                            channel === 'partner' ? STATUS_WEIGHTS_PARTNER : STATUS_WEIGHTS_DEFAULT;
                         const status = pickWeighted(rng, ORDER_STATUSES, statusWeights);
 
                         const lines = pickWeighted(rng, LINE_COUNTS, LINE_COUNT_WEIGHTS);
                         const monthCdf = monthlyCdfs[day.month]!;
-                        const discountProb = day.bfWindow ? DISCOUNT_PROB_BF : DISCOUNT_PROB_BASELINE;
-                        const discountFracBase = day.bfWindow ? 0.10 : 0.05;
-                        const discountFracSpan = day.bfWindow ? 0.30 : 0.25;
+                        const discountProb = day.bfWindow
+                            ? DISCOUNT_PROB_BF
+                            : DISCOUNT_PROB_BASELINE;
+                        const discountFracBase = day.bfWindow ? 0.1 : 0.05;
+                        const discountFracSpan = day.bfWindow ? 0.3 : 0.25;
 
-                        const lineRecords: Array<{
-                            product: ProductInfo;
-                            qty: number;
-                            disc: number;
-                        }> = [];
-                        let subtotal = 0;
-                        for (let l = 0; l < lines; l++) {
-                            const prodIdx = sampleCdf(rng, monthCdf);
-                            const prod = products[prodIdx]!;
-                            const qty = pickWeighted(rng, QUANTITIES, QUANTITY_WEIGHTS);
-                            const lineGross = prod.price_cents * qty;
-                            const disc = rng() < discountProb
-                                ? Math.floor(lineGross * (discountFracBase + rng() * discountFracSpan))
-                                : 0;
-                            subtotal += lineGross - disc;
-                            lineRecords.push({ product: prod, qty, disc });
-                        }
+                        const { lineRecords, subtotal } = buildOrderLines(rng, {
+                            lines,
+                            products,
+                            monthCdf,
+                            discountProb,
+                            discountFracBase,
+                            discountFracSpan,
+                        });
                         const shipping = subtotal < 10_000 ? 999 : 0;
                         const tax = Math.floor(subtotal * 0.085);
                         const total = subtotal + shipping + tax;
 
                         sqlite3.bind_collection(orderStmt, [
-                            customerId, warehouse, orderDate, status, channel,
-                            subtotal, shipping, tax, total,
+                            customerId,
+                            warehouse,
+                            orderDate,
+                            status,
+                            channel,
+                            subtotal,
+                            shipping,
+                            tax,
+                            total,
                         ]);
                         await sqlite3.step(orderStmt);
                         await sqlite3.reset(orderStmt);
@@ -947,7 +1692,11 @@ async function insertOrders(
 
                         for (const ln of lineRecords) {
                             sqlite3.bind_collection(itemStmt, [
-                                orderId, ln.product.id, ln.qty, ln.product.price_cents, ln.disc,
+                                orderId,
+                                ln.product.id,
+                                ln.qty,
+                                ln.product.price_cents,
+                                ln.disc,
                             ]);
                             await sqlite3.step(itemStmt);
                             await sqlite3.reset(itemStmt);
@@ -988,18 +1737,30 @@ async function insertReturns(
             for (const it of items) {
                 if (it.status === 'cancelled' || it.status === 'pending') continue;
                 const base = RETURN_RATE_BY_CATEGORY[it.category] ?? RETURN_RATE_FALLBACK;
-                const rate = it.customer_tier === 'platinum' ? base * RETURN_RATE_PLATINUM_FACTOR : base;
+                const rate =
+                    it.customer_tier === 'platinum' ? base * RETURN_RATE_PLATINUM_FACTOR : base;
                 if (rng() >= rate) continue;
 
                 const qty = intBetween(rng, 1, it.quantity);
-                const reason = it.category === 'boots'
-                    ? pickWeighted(rng, RETURN_REASONS, RETURN_REASON_WEIGHTS_BOOTS)
-                    : pick(rng, RETURN_REASONS);
+                const reason =
+                    it.category === 'boots'
+                        ? pickWeighted(rng, RETURN_REASONS, RETURN_REASON_WEIGHTS_BOOTS)
+                        : pick(rng, RETURN_REASONS);
                 const returnMs = it.order_date_ms + DAY_MS * intBetween(rng, 3, 45);
                 const refund = qty * it.unit_price_cents;
-                const restocked = reason === 'defective' ? 0 : rng() < 0.85 ? 1 : 0;
+                let restocked: number;
+                if (reason === 'defective') {
+                    restocked = 0;
+                } else {
+                    restocked = rng() < 0.85 ? 1 : 0;
+                }
                 sqlite3.bind_collection(stmt, [
-                    it.order_item_id, isoDateTime(returnMs), qty, reason, refund, restocked,
+                    it.order_item_id,
+                    isoDateTime(returnMs),
+                    qty,
+                    reason,
+                    refund,
+                    restocked,
                 ]);
                 await sqlite3.step(stmt);
                 await sqlite3.reset(stmt);
@@ -1032,21 +1793,38 @@ async function insertClaims(
                     ? pickWeighted(rng, CLAIM_CATEGORIES, CLAIM_CATEGORY_WEIGHTS_SKECHERS)
                     : pick(rng, CLAIM_CATEGORIES);
                 const severity = pickWeighted(
-                    rng, CLAIM_SEVERITIES,
+                    rng,
+                    CLAIM_SEVERITIES,
                     isSkechers ? CLAIM_SEVERITY_WEIGHTS_SKECHERS : CLAIM_SEVERITY_WEIGHTS_DEFAULT,
                 );
                 const status = pickWeighted(rng, CLAIM_STATUSES, CLAIM_STATUS_WEIGHTS);
                 const openedMs = it.order_date_ms + DAY_MS * intBetween(rng, 1, 60);
-                const resolvedAt = status === 'resolved' || status === 'rejected'
-                    ? isoDateTime(openedMs + DAY_MS * intBetween(rng, 1, 30))
-                    : null;
-                const description = pick(rng, CLAIM_TEMPLATES[category]!);
-                const compensation = status === 'resolved' && rng() < 0.7
-                    ? Math.floor(it.unit_price_cents * (0.2 + rng() * 0.8))
-                    : null;
+                const resolvedAt =
+                    status === 'resolved' || status === 'rejected'
+                        ? isoDateTime(openedMs + DAY_MS * intBetween(rng, 1, 30))
+                        : null;
+                // Prose, and reused heavily (≤10 templates per category), so
+                // perturb at a higher rate and allow a few edits per sentence.
+                const description = maybeTypo(
+                    rng,
+                    pick(rng, CLAIM_TEMPLATES[category]!),
+                    CLAIM_TYPO_RATE,
+                    3,
+                );
+                const compensation =
+                    status === 'resolved' && rng() < 0.7
+                        ? Math.floor(it.unit_price_cents * (0.2 + rng() * 0.8))
+                        : null;
                 sqlite3.bind_collection(stmt, [
-                    it.order_item_id, it.customer_id, isoDateTime(openedMs), resolvedAt,
-                    category, severity, status, description, compensation,
+                    it.order_item_id,
+                    it.customer_id,
+                    isoDateTime(openedMs),
+                    resolvedAt,
+                    category,
+                    severity,
+                    status,
+                    description,
+                    compensation,
                 ]);
                 await sqlite3.step(stmt);
                 await sqlite3.reset(stmt);

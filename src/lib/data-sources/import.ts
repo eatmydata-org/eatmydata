@@ -1,5 +1,6 @@
 import type { DataSource } from './types';
-import { getSourceDb, putTableMeta, assertSafeIdentifier } from './db';
+import { getSourceDb, putTableMeta, clearColumnCardinality, assertSafeIdentifier } from './db';
+import { autoIndexAfterImport } from './semantic-index';
 import { sanitizeColumnNames, toSnakeCase, dedupIdentifier } from './identifier';
 import { sniffColumn, coerceCell, type ColumnSniff } from './type-sniff';
 import { parseCsv, type CsvParseResult } from './parse-csv';
@@ -272,6 +273,14 @@ export async function importBatch(
         }
     }
     onProgress?.({ completed: jobs.length, total: jobs.length });
+    // Best-effort, non-blocking: embed high-cardinality TEXT columns of the
+    // freshly landed tables so vector_search() works on them. Gated inside on
+    // the on-device embeddings model already being cached, so it no-ops unless
+    // the user opted into on-device models. Never affects the import outcome.
+    const landedTables = outcomes
+        .filter((o) => o.status === 'imported' || o.status === 'overwritten')
+        .map((o) => ({ name: o.finalTableName, overwritten: o.status === 'overwritten' }));
+    if (landedTables.length > 0) autoIndexAfterImport(source, landedTables);
     return outcomes;
 }
 
@@ -320,6 +329,15 @@ async function importOne(
             readableName: job.readableName,
             importedAt: Date.now(),
         });
+        // Invalidate any cached cardinality verdicts for this name so the next
+        // describe_table re-analyzes the freshly imported rows (categorical
+        // columns are detected lazily at describe time — see low-cardinality.ts).
+        // Best-effort: the import is already committed.
+        try {
+            await clearColumnCardinality(db, finalTableName);
+        } catch (e) {
+            console.warn('[data-sources/import] clearing cardinality cache failed:', e);
+        }
         return inserted;
     } catch (e) {
         try {

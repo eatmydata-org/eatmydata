@@ -15,7 +15,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll } from 'vitest';
-import { setWasmLoader } from '@/libs/qjs';
+import { setWasmLoader } from '@/lib/qjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const qjsWasmPath = resolve(__dirname, '../../../assets/qjs.wasm');

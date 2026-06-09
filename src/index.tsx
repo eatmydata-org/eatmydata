@@ -10,6 +10,7 @@ const Chat = lazy(() => import('./routes/chat'));
 const Result = lazy(() => import('./routes/result'));
 const Sql = lazy(() => import('./routes/sql'));
 const Pii = lazy(() => import('./routes/pii'));
+const Embeddings = lazy(() => import('./routes/embeddings'));
 const Qjs = lazy(() => import('./routes/qjs'));
 const Settings = lazy(() => import('./routes/settings'));
 const Xlsx = lazy(() => import('./routes/xlsx'));
@@ -30,6 +31,7 @@ render(
                     <Route path="/result/:id" component={Result} />
                     <Route path="/sql" component={Sql} />
                     <Route path="/pii" component={Pii} />
+                    <Route path="/embeddings" component={Embeddings} />
                     <Route path="/qjs" component={Qjs} />
                     <Route path="/settings" component={Settings} />
                     <Route path="/xlsx" component={Xlsx} />

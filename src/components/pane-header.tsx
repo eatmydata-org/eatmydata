@@ -1,5 +1,5 @@
 import { type Component, type JSX } from 'solid-js';
-import { cn } from '@/libs/cn';
+import { cn } from '@/lib/cn';
 
 type PaneHeaderProps = {
     /** Padding / justify / bg overrides (merged via tailwind-merge). */

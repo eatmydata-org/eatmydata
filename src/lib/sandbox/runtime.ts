@@ -1,4 +1,4 @@
-import { evalJS, initQJS } from '@/libs/qjs';
+import { evalJS, initQJS } from '@/lib/qjs';
 import tsBlankSpace from 'ts-blank-space';
 
 /**
@@ -53,9 +53,7 @@ function ensureReady(): Promise<void> {
     return initPromise;
 }
 
-export async function runInSandbox(
-    args: SandboxRunArgs,
-): Promise<SandboxResult> {
+export async function runInSandbox(args: SandboxRunArgs): Promise<SandboxResult> {
     await ensureReady();
     // Strip TypeScript annotations (whitespace-preserving, so line numbers in
     // any QuickJS stack trace still map back to the original source).
@@ -66,9 +64,7 @@ export async function runInSandbox(
         return {
             ok: false,
             phase: 'parse',
-            error: `TypeScript stripping failed: ${
-                e instanceof Error ? e.message : String(e)
-            }`,
+            error: `TypeScript stripping failed: ${e instanceof Error ? e.message : String(e)}`,
             stdout: [],
         };
     }
@@ -98,9 +94,7 @@ export async function runInSandbox(
         const len = resultStr.length;
         const head = resultStr.slice(0, 400);
         const tail = len > 800 ? resultStr.slice(len - 400) : '';
-        const body = tail
-            ? `${head}\n…[${len - 800} chars elided]…\n${tail}`
-            : head;
+        const body = tail ? `${head}\n…[${len - 800} chars elided]…\n${tail}` : head;
         return {
             ok: false,
             phase: 'parse',
@@ -112,10 +106,7 @@ export async function runInSandbox(
     if (!result.ok && result.phase === 'user-code' && result.stack) {
         // Rewrite the line number in the stack so the LLM sees user-code
         // line numbers (1-based) rather than wrapped-script line numbers.
-        const adjusted = adjustStackToUserLines(
-            result.stack,
-            preambleLines,
-        );
+        const adjusted = adjustStackToUserLines(result.stack, preambleLines);
         return { ...result, line: adjusted.line, stack: adjusted.stack };
     }
     return result;
@@ -137,6 +128,34 @@ function wrapPreamble(globals: Record<string, unknown>): string {
   for (var __k in __g) { globalThis[__k] = __g[__k]; }
   globalThis.__output = undefined;
   globalThis.__stdout = [];
+  globalThis.__blocks = [];
+  globalThis.md = function(s){
+    var text;
+    if (s && s.raw && Array.isArray(s)) {
+      text = '';
+      for (var i = 0; i < s.length; i++) { text += s[i]; if (i < arguments.length - 1) text += String(arguments[i + 1]); }
+    } else { text = String(s == null ? '' : s); }
+    return { __kind: 'block', type: 'markdown', text: text };
+  };
+  globalThis.chart = function(option){
+    if (!option || typeof option !== 'object') throw new TypeError('chart(option): option must be an ECharts option object');
+    return { __kind: 'block', type: 'chart', option: option };
+  };
+  globalThis.table = function(rows, opts){
+    if (!Array.isArray(rows)) throw new TypeError('table(rows): rows must be an array of row objects');
+    var b = { __kind: 'block', type: 'table', rows: rows };
+    if (opts) { if (opts.columns) b.columns = opts.columns; if (opts.title) b.title = opts.title; if (opts.caption) b.caption = opts.caption; }
+    return b;
+  };
+  globalThis.present = function(){
+    for (var i = 0; i < arguments.length; i++) {
+      var b = arguments[i];
+      if (b == null) continue;
+      if (Array.isArray(b)) { globalThis.present.apply(null, b); continue; }
+      globalThis.__blocks.push(b);
+    }
+    globalThis.__output = { __kind: 'blocks', blocks: globalThis.__blocks };
+  };
   var __origConsole = globalThis.console;
   globalThis.console = {
     log: function(){
@@ -167,16 +186,11 @@ function adjustStackToUserLines(
     // QuickJS stack frames look like:  "    at <anonymous> (<input>:42:5)"
     // Subtract the preamble offset so 42 becomes the user-code line.
     let firstLine: number | undefined;
-    const adjusted = stack.replace(
-        /<input>:(\d+):(\d+)/g,
-        (_, l: string, c: string) => {
-            const userLine = Number(l) - preambleLines;
-            if (firstLine === undefined && userLine > 0) firstLine = userLine;
-            return userLine > 0
-                ? `<user-code>:${userLine}:${c}`
-                : `<sandbox>:${l}:${c}`;
-        },
-    );
+    const adjusted = stack.replace(/<input>:(\d+):(\d+)/g, (_, l: string, c: string) => {
+        const userLine = Number(l) - preambleLines;
+        if (firstLine === undefined && userLine > 0) firstLine = userLine;
+        return userLine > 0 ? `<user-code>:${userLine}:${c}` : `<sandbox>:${l}:${c}`;
+    });
     return { line: firstLine, stack: adjusted };
 }
 
@@ -194,6 +208,7 @@ ${code}
     return JSON.stringify({ ok: false, phase: 'user-code', error: __errName + ': ' + __errMsg, stack: __errStack, stdout: globalThis.__stdout });
   } finally {
     globalThis.console = __origConsole;
+    try { delete globalThis.md; delete globalThis.chart; delete globalThis.table; delete globalThis.present; delete globalThis.__blocks; } catch(_) {}
     for (var __k2 in __g) { try { delete globalThis[__k2]; } catch(_) {} }
   }
 })()`;

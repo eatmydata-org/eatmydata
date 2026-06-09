@@ -2,6 +2,7 @@ import {
     createSignal,
     onCleanup,
     onMount,
+    on,
     Show,
     For,
     createEffect,
@@ -50,6 +51,11 @@ import { deleteActionCascade, findActionsReferencingTable } from '@/lib/actions/
 import type { Action } from '@/lib/actions/types';
 import { ConfirmDialog } from './confirm-dialog';
 import { CascadeDropDialog, type CascadeChoice } from './cascade-drop-dialog';
+
+function errorMessage(e: unknown): string {
+    if (isUnreadableDbError(e)) return UNREADABLE_DB_MESSAGE;
+    return e instanceof Error ? e.message : String(e);
+}
 
 type Props = {
     source: DataSource;
@@ -161,13 +167,7 @@ export const TableGrid: Component<Props> = (props) => {
             gridApi?.setGridOption('datasource', makeDatasource());
             await refreshRowCount();
         } catch (e) {
-            setError(
-                isUnreadableDbError(e)
-                    ? UNREADABLE_DB_MESSAGE
-                    : e instanceof Error
-                      ? e.message
-                      : String(e),
-            );
+            setError(errorMessage(e));
         }
     };
 
@@ -389,18 +389,16 @@ export const TableGrid: Component<Props> = (props) => {
         void loadSchemaAndBind();
     });
 
-    createEffect(() => {
-        // Re-fetch when table or refresh tick changes.
-        props.tableName;
-        props.refreshTick;
-        props.source.id;
-        if (gridApi) {
+    // Re-fetch when table, refresh tick, or source changes.
+    createEffect(
+        on([() => props.tableName, () => props.refreshTick, () => props.source.id], () => {
+            if (!gridApi) return;
             setSchema(null);
             setError(null);
             setTotalCount(null);
             void loadSchemaAndBind();
-        }
-    });
+        }),
+    );
 
     createEffect(() => {
         const defs = colDefs();
@@ -413,16 +411,17 @@ export const TableGrid: Component<Props> = (props) => {
     });
 
     const isView = () => schema()?.type === 'view';
+    const rowCountLabel = () => {
+        const n = totalCount();
+        if (n === null) return '…';
+        return `${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}`;
+    };
     return (
         <div class="flex-1 min-h-0 flex flex-col gap-2">
             <div class="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
                 <span class="font-mono text-foreground">{props.tableName}</span>
                 <span>·</span>
-                <span>
-                    {totalCount() === null
-                        ? '…'
-                        : `${totalCount()!.toLocaleString()} ${totalCount() === 1 ? 'row' : 'rows'}`}
-                </span>
+                <span>{rowCountLabel()}</span>
                 <Show when={props.readOnly}>
                     <span class="text-amber-600 dark:text-amber-400">read-only</span>
                 </Show>
@@ -595,8 +594,8 @@ const ColumnList: Component<{
     </div>
 );
 
-// TODO(pii-redact): when implemented, the toolbar button above wires
-// into the PII worker (src/lib/pii/worker.ts) batch-redact path.
+// NOTE (pii-redact, deferred): when implemented, the toolbar button above wires
+// into the Transformers Worker (src/lib/transformers/worker.ts) batch-redact path.
 // Selection model: column-multi-select via grid header right-click →
 // "Redact this column"; runs the NER pipeline over every cell and
 // stores both the redacted value and the redaction map (so the user

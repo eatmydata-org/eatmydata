@@ -148,7 +148,7 @@ export const DETECTORS: Detector[] = [
         id: 'github-token',
         label: 'GitHub token',
         severity: 'high',
-        pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b/g,
+        pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_\w{22,})\b/g,
         redact: redactToken(7),
     },
     {
@@ -213,8 +213,7 @@ export const DETECTORS: Detector[] = [
 
 const ALLOW_PRAGMA = /secret-scan-allow|pragma:\s*allowlist\s+secret/i;
 
-const EXAMPLE_DOMAINS =
-    /@(?:[A-Za-z0-9.-]*\.)?(?:example\.(?:com|org|net)|test|invalid|localhost)$/i;
+const EXAMPLE_DOMAINS = /@(?:[a-z0-9.-]*\.)?(?:example\.(?:com|org|net)|test|invalid|localhost)$/i;
 
 // ── core scan ─────────────────────────────────────────────────────────────
 
@@ -229,6 +228,55 @@ interface RawHit {
     start: number;
     end: number;
     finding: Omit<Finding, 'file'>;
+}
+
+/** Run one detector across a line, pushing every accepted match to `hits`. */
+function collectDetectorHits(
+    det: Detector,
+    detectorIndex: number,
+    line: string,
+    lineNo: number,
+    skipExampleEmails: boolean,
+    hits: RawHit[],
+): void {
+    det.pattern.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = det.pattern.exec(line)) !== null) {
+        const raw = m[0];
+        // Guard against zero-width matches looping forever.
+        if (m.index === det.pattern.lastIndex) det.pattern.lastIndex++;
+        if (det.validate && !det.validate(raw)) continue;
+        if (det.id === 'email' && skipExampleEmails && EXAMPLE_DOMAINS.test(raw)) continue;
+        hits.push({
+            detectorIndex,
+            start: m.index,
+            end: m.index + raw.length,
+            finding: {
+                detectorId: det.id,
+                label: det.label,
+                severity: det.severity,
+                line: lineNo,
+                column: m.index + 1,
+                preview: det.redact(raw),
+            },
+        });
+    }
+}
+
+/**
+ * Dedup overlapping spans on the same line: a single secret can match both a
+ * specific and a generic detector (e.g. `sk-or-v1-…` matches both
+ * openrouter-key and the generic `sk-` rule). Keep the most specific (lowest
+ * detector index). Mutates `hits` (sorts it) and appends survivors to `out`.
+ */
+function dedupHits(hits: RawHit[], out: Omit<Finding, 'file'>[]): void {
+    hits.sort((a, b) => a.start - b.start || a.detectorIndex - b.detectorIndex);
+    let lastEnd = -1;
+    for (const h of hits) {
+        if (h.start < lastEnd) continue; // overlaps a kept hit → drop
+        out.push(h.finding);
+        lastEnd = h.end;
+    }
 }
 
 /**
@@ -247,42 +295,9 @@ export function scanText(text: string, opts: ScanOptions = {}): Omit<Finding, 'f
 
         const hits: RawHit[] = [];
         for (let di = 0; di < detectors.length; di++) {
-            const det = detectors[di]!;
-            det.pattern.lastIndex = 0;
-            let m: RegExpExecArray | null;
-            while ((m = det.pattern.exec(line)) !== null) {
-                const raw = m[0];
-                // Guard against zero-width matches looping forever.
-                if (m.index === det.pattern.lastIndex) det.pattern.lastIndex++;
-                if (det.validate && !det.validate(raw)) continue;
-                if (det.id === 'email' && skipExampleEmails && EXAMPLE_DOMAINS.test(raw)) continue;
-                hits.push({
-                    detectorIndex: di,
-                    start: m.index,
-                    end: m.index + raw.length,
-                    finding: {
-                        detectorId: det.id,
-                        label: det.label,
-                        severity: det.severity,
-                        line: li + 1,
-                        column: m.index + 1,
-                        preview: det.redact(raw),
-                    },
-                });
-            }
+            collectDetectorHits(detectors[di]!, di, line, li + 1, skipExampleEmails, hits);
         }
-
-        // Dedup overlapping spans on the same line: a single secret can match
-        // both a specific and a generic detector (e.g. `sk-or-v1-…` matches
-        // both openrouter-key and the generic `sk-` rule). Keep the most
-        // specific (lowest detector index).
-        hits.sort((a, b) => a.start - b.start || a.detectorIndex - b.detectorIndex);
-        let lastEnd = -1;
-        for (const h of hits) {
-            if (h.start < lastEnd) continue; // overlaps a kept hit → drop
-            out.push(h.finding);
-            lastEnd = h.end;
-        }
+        dedupHits(hits, out);
     }
     return out;
 }
@@ -298,6 +313,18 @@ interface CliOptions {
     quiet: boolean;
 }
 
+function parseSeverity(v: string | undefined): Severity {
+    if (v !== 'low' && v !== 'medium' && v !== 'high')
+        throw new Error(`--min-severity must be low|medium|high, got ${v}`);
+    return v;
+}
+
+const MODE_FLAGS: Record<string, CliOptions['mode']> = {
+    '--staged': 'staged',
+    '--all': 'all',
+    '--working': 'working',
+};
+
 function parseArgs(argv: string[]): CliOptions {
     const o: CliOptions = {
         mode: 'staged',
@@ -309,15 +336,10 @@ function parseArgs(argv: string[]): CliOptions {
     };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i]!;
-        if (a === '--staged') o.mode = 'staged';
-        else if (a === '--all') o.mode = 'all';
-        else if (a === '--working') o.mode = 'working';
-        else if (a === '--min-severity') {
-            const v = argv[++i];
-            if (v !== 'low' && v !== 'medium' && v !== 'high')
-                throw new Error(`--min-severity must be low|medium|high, got ${v}`);
-            o.minSeverity = v;
-        } else if (a === '--include-examples') o.includeExamples = true;
+        const mode = MODE_FLAGS[a];
+        if (mode) o.mode = mode;
+        else if (a === '--min-severity') o.minSeverity = parseSeverity(argv[++i]);
+        else if (a === '--include-examples') o.includeExamples = true;
         else if (a === '--no-color') o.color = false;
         else if (a === '--quiet') o.quiet = true;
         else if (a.startsWith('--')) throw new Error(`Unknown argument: ${a}`);
@@ -331,7 +353,7 @@ function git(args: string[]): string {
     return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 }
 
-const SKIP_PATH = ['node_modules/', 'contrib/', 'public/demo/', 'dist/', 'build/', '.husky/_/'];
+const SKIP_PATH = ['node_modules/', 'contrib/', 'src/assets/demo/', 'dist/', 'build/', '.husky/_/'];
 const SKIP_SUFFIX = [
     '.wasm',
     '.png',
@@ -438,6 +460,50 @@ function severityTag(sev: Severity, color: boolean): string {
     return paint(color, C.bold + code, label);
 }
 
+function scopeLabel(mode: CliOptions['mode']): string {
+    if (mode === 'staged') return 'staged content';
+    if (mode === 'all') return 'all tracked files';
+    return 'working tree';
+}
+
+/** Render all blocking findings + the summary footer to stderr. */
+function reportBlocking(blocking: Finding[], color: boolean): void {
+    blocking.sort(
+        (a, b) =>
+            SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
+            a.file.localeCompare(b.file) ||
+            a.line - b.line,
+    );
+
+    process.stderr.write('\n');
+    for (const f of blocking) {
+        const loc = paint(color, C.cyan, `${f.file}:${f.line}:${f.column}`);
+        process.stderr.write(`${severityTag(f.severity, color)}  ${f.label}\n`);
+        process.stderr.write(`  ${loc}\n`);
+        process.stderr.write(`  ${paint(color, C.dim, f.preview)}\n\n`);
+    }
+
+    const counts = { high: 0, medium: 0, low: 0 };
+    for (const f of blocking) counts[f.severity]++;
+    const fileCount = new Set(blocking.map((f) => f.file)).size;
+    process.stderr.write(
+        paint(
+            color,
+            C.bold + C.red,
+            `✖ ${blocking.length} finding(s) (${counts.high} high, ${counts.medium} medium, ${counts.low} low) in ${fileCount} file(s).`,
+        ) + '\n',
+    );
+    process.stderr.write(
+        paint(
+            color,
+            C.gray,
+            'Commit blocked. Remove the secret (move it to an env var / gitignored .env),\n' +
+                "or, if it's a confirmed false positive, add a `secret-scan-allow` comment\n" +
+                'on the line or a path to `.secretsignore`.\n',
+        ),
+    );
+}
+
 function main(): number {
     const opts = parseArgs(process.argv.slice(2));
     const root = git(['rev-parse', '--show-toplevel']).trim();
@@ -445,12 +511,7 @@ function main(): number {
     const sources = collectFiles(opts, root).filter((s) => !isSkipped(s.path, ignore));
 
     if (!opts.quiet) {
-        const scope =
-            opts.mode === 'staged'
-                ? 'staged content'
-                : opts.mode === 'all'
-                  ? 'all tracked files'
-                  : 'working tree';
+        const scope = scopeLabel(opts.mode);
         process.stderr.write(
             paint(opts.color, C.cyan, '🔑 secret-scan') +
                 ` — scanning ${sources.length} file(s) (${scope})\n`,
@@ -482,40 +543,7 @@ function main(): number {
         return 0;
     }
 
-    blocking.sort(
-        (a, b) =>
-            SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
-            a.file.localeCompare(b.file) ||
-            a.line - b.line,
-    );
-
-    process.stderr.write('\n');
-    for (const f of blocking) {
-        const loc = paint(opts.color, C.cyan, `${f.file}:${f.line}:${f.column}`);
-        process.stderr.write(`${severityTag(f.severity, opts.color)}  ${f.label}\n`);
-        process.stderr.write(`  ${loc}\n`);
-        process.stderr.write(`  ${paint(opts.color, C.dim, f.preview)}\n\n`);
-    }
-
-    const counts = { high: 0, medium: 0, low: 0 };
-    for (const f of blocking) counts[f.severity]++;
-    const fileCount = new Set(blocking.map((f) => f.file)).size;
-    process.stderr.write(
-        paint(
-            opts.color,
-            C.bold + C.red,
-            `✖ ${blocking.length} finding(s) (${counts.high} high, ${counts.medium} medium, ${counts.low} low) in ${fileCount} file(s).`,
-        ) + '\n',
-    );
-    process.stderr.write(
-        paint(
-            opts.color,
-            C.gray,
-            'Commit blocked. Remove the secret (move it to an env var / gitignored .env),\n' +
-                "or, if it's a confirmed false positive, add a `secret-scan-allow` comment\n" +
-                'on the line or a path to `.secretsignore`.\n',
-        ),
-    );
+    reportBlocking(blocking, opts.color);
     return 1;
 }
 

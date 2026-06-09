@@ -4,6 +4,7 @@ import { DEMO_ABOUT, type DemoSpec } from './about';
 import { putTableMeta } from './db';
 import { listSources, makeDataSourceId, makeDbFile, putSource, takenDbLeaves } from './store';
 import { dedupHumanName } from './identifier';
+import { autoIndexAfterImport } from './semantic-index';
 import type { DataSource } from './types';
 
 export type DemoProgress = {
@@ -129,6 +130,15 @@ export async function createDemoSource(
             // tables). Stamp what we can and continue.
         }
     }
+
+    // Best-effort, non-blocking: embed high-cardinality free-text columns (e.g.
+    // retail `claims.description`) so vector_search works on the demo too. Gated
+    // inside on the `semanticSearchEnabled` setting, so it no-ops unless the user
+    // opted in. Demo tables are freshly written, so none are "overwritten".
+    autoIndexAfterImport(
+        source,
+        about.tables.map((t) => ({ name: t.name, overwritten: false })),
+    );
     return source;
 }
 

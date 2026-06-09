@@ -89,6 +89,14 @@ function ipv6Shape(s: string): boolean {
     return parts.length <= 8;
 }
 
+// ISO YYYY-MM-DD, US MM/DD/YYYY, or short MM/YY exp dates.
+// PII date pattern: the three calendar alternatives (ISO / US slash / MM-YY
+// expiry) must stay literal to keep exact match boundaries; input is bounded
+// short text.
+// prettier-ignore
+// eslint-disable-next-line sonarjs/regex-complexity
+const DATE_PATTERN = /\b(?:\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])|(?:0?[1-9]|1[0-2])\/(?:0?[1-9]|[12]\d|3[01])\/\d{2,4}|(?:0[1-9]|1[0-2])\/\d{2}(?:\d{2})?)\b/g;
+
 export const RECOGNIZERS: readonly Recognizer[] = [
     // --- Network / digital ---
     {
@@ -158,7 +166,7 @@ export const RECOGNIZERS: readonly Recognizer[] = [
     },
     {
         type: 'iban_code',
-        pattern: /\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){2,8}\b/g,
+        pattern: /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{1,4}){2,8}\b/g,
         score: 0.85,
         validate: ibanMod97,
     },
@@ -208,7 +216,7 @@ export const RECOGNIZERS: readonly Recognizer[] = [
     // --- UK identifiers ---
     {
         type: 'uk_nin',
-        pattern: /\b[A-CEGHJ-PR-TW-Z]{2}[ ]?\d{2}[ ]?\d{2}[ ]?\d{2}[ ]?[A-D]\b/g,
+        pattern: /\b[A-CEGHJ-PR-TW-Z]{2} ?\d{2} ?\d{2} ?\d{2} ?[A-D]\b/g,
         score: 0.75,
     },
     {
@@ -230,7 +238,7 @@ export const RECOGNIZERS: readonly Recognizer[] = [
     },
     {
         type: 'github_token',
-        pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}\b/g,
+        pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_\w{20,}\b|\bgithub_pat_\w{22,}\b/g,
         score: 0.95,
     },
     {
@@ -258,9 +266,7 @@ export const RECOGNIZERS: readonly Recognizer[] = [
     },
     {
         type: 'date',
-        // ISO YYYY-MM-DD, US MM/DD/YYYY, or short MM/YY exp dates.
-        pattern:
-            /\b(?:\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])|(?:0?[1-9]|1[0-2])\/(?:0?[1-9]|[12]\d|3[01])\/\d{2,4}|(?:0[1-9]|1[0-2])\/\d{2}(?:\d{2})?)\b/g,
+        pattern: DATE_PATTERN,
         score: 0.65,
     },
     {

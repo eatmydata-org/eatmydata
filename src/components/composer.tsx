@@ -11,7 +11,7 @@ import {
     type Component,
     type JSX,
 } from 'solid-js';
-import { getPiiAccessor, type PiiEntity } from '@/lib/pii/client';
+import { getTransformersAccessor, type PiiEntity } from '@/lib/transformers/client';
 import { HighlightedTextarea, singleEditDiff } from '@/components/pii/highlighted-textarea';
 import { formatLabel, paletteFor } from '@/components/pii/entity-badge';
 import { Button } from '@/registry/ui/button';
@@ -61,16 +61,15 @@ function reanchorIntervals(
         }
         if (s >= d.end) {
             out.push(d);
-            continue;
         }
-        // Edit overlaps the interval interior → drop.
+        // Otherwise the edit overlaps the interval interior → drop.
     }
     return out;
 }
 
-// TODO: replace with a real user setting once settings management lands.
-// When false the composer skips PII detection entirely; the visual
-// layout (floating card, arrow-up button) stays the same.
+// NOTE: deferred — to be replaced with a real user setting once settings
+// management lands. When false the composer skips PII detection entirely;
+// the visual layout (floating card, arrow-up button) stays the same.
 const PII_GUARD_ENABLED = true;
 
 const PII_DEBOUNCE_MS = 350;
@@ -177,11 +176,11 @@ const GuardedComposer: Component<Props> = (props) => {
     let debounceTimer: number | undefined;
     let runToken = 0;
 
-    const accessor = getPiiAccessor();
+    const accessor = getTransformersAccessor();
 
     onMount(() => {
-        void accessor
-            .warmup()
+        accessor
+            .warmup('pii')
             .then(() => setPiiReady(true))
             .catch((e: unknown) => {
                 console.error('[composer] PII warmup failed:', e);
@@ -379,8 +378,7 @@ const GuardedComposer: Component<Props> = (props) => {
                     ) {
                         // Same type, intersecting, but not equal —
                         // the detector now sees a different value at
-                        // this spot. Drop.
-                        keep = false;
+                        // this spot. Drop (keep is already false).
                         break;
                     }
                 }

@@ -128,3 +128,10 @@ export function bindExtraCapi(module: unknown): ExtraCapi {
 /** SQLITE_DESERIALIZE_* flags. */
 export const SQLITE_DESERIALIZE_FREEONCLOSE = 1;
 export const SQLITE_DESERIALIZE_RESIZEABLE = 2;
+
+/**
+ * SQLITE_SERIALIZE_NOCOPY (0x001): for in-memory databases, return a pointer
+ * directly into the existing memory buffer rather than allocating a new copy.
+ * The caller must NOT call sqlite3_free() on the returned pointer.
+ */
+export const SQLITE_SERIALIZE_NOCOPY = 0x001;

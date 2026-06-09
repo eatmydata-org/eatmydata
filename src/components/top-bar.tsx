@@ -12,7 +12,7 @@ import { useSettings } from '@/lib/runtime/client';
 import { Brand } from './brand';
 
 interface PowerTool {
-    id: 'qjs' | 'sql' | 'pii';
+    id: 'qjs' | 'sql' | 'pii' | 'embeddings';
     href: string;
     label: string;
 }
@@ -30,11 +30,13 @@ export const TopBar = () => {
             { id: 'qjs', href: '/qjs', label: 'QJS' },
             { id: 'sql', href: '/sql', label: 'SQL' },
             { id: 'pii', href: '/pii', label: 'PII' },
+            { id: 'embeddings', href: '/embeddings', label: 'Embeddings' },
         ];
         return all.filter((t) => {
             if (t.id === 'qjs') return settings.showQjsTester;
             if (t.id === 'sql') return settings.showSqlConsole;
             if (t.id === 'pii') return settings.showPiiTester;
+            if (t.id === 'embeddings') return settings.showEmbeddingsTester;
             return false;
         });
     };

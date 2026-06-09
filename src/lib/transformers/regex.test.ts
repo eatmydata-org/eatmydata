@@ -3,7 +3,7 @@ import { analyzeRegex } from './regex';
 
 describe('analyzeRegex — detection', () => {
     it('finds an email and an IP address', () => {
-        const { entities } = analyzeRegex('reach me at jane.doe@acme.io or 10.0.0.1');
+        const { entities } = analyzeRegex('reach me at jane.doe@acme.io or 10.0.0.1'); // secret-scan-allow -- test fixture
         const types = entities.map((e) => e.entity_type);
         expect(types).toContain('email');
         expect(types).toContain('ip_address');
@@ -27,16 +27,16 @@ describe('analyzeRegex — scan cap (ReDoS guard)', () => {
 
     it('flags truncation and only scans the prefix on oversized input', () => {
         // PII placed AFTER the cap must not be found, and truncated must be set.
-        const text = 'x'.repeat(OVER) + ' secret@hidden.io';
+        const text = 'x'.repeat(OVER) + ' secret@hidden.io'; // secret-scan-allow -- test fixture
         const { entities, stats } = analyzeRegex(text);
         expect(stats.truncated).toBe(true);
         expect(entities.find((e) => e.entity_type === 'email')).toBeUndefined();
     });
 
     it('still detects PII that falls within the scanned prefix', () => {
-        const text = 'early@found.io ' + 'x'.repeat(OVER);
+        const text = 'early@found.io ' + 'x'.repeat(OVER); // secret-scan-allow -- test fixture
         const { entities, stats } = analyzeRegex(text);
         expect(stats.truncated).toBe(true);
-        expect(entities.find((e) => e.entity_type === 'email')?.text).toBe('early@found.io');
+        expect(entities.find((e) => e.entity_type === 'email')?.text).toBe('early@found.io'); // secret-scan-allow -- test fixture
     });
 });

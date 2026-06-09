@@ -24,11 +24,15 @@ import { ImportDialog } from '@/components/data-sources/import-dialog';
 import { ViewEditor } from '@/components/data-sources/view-editor';
 import { DemoDialog } from '@/components/data-sources/demo-dialog';
 import { ConfirmDialog } from '@/components/data-sources/confirm-dialog';
+import { SemanticIndexProgress } from '@/components/data-sources/semantic-index-progress';
 import { listSources, deleteSource, setDefaultSource } from '@/lib/data-sources/store';
 import type { DataSource } from '@/lib/data-sources/types';
 import { closeSqliteDb, destroySqliteOpfs } from '@/lib/sqlite/client';
 import { getSourceDb } from '@/lib/data-sources/db';
-import { createSourceFromFile } from '@/lib/data-sources/create-from-file';
+import {
+    createSourceFromFile,
+    type CreateFromFileResult,
+} from '@/lib/data-sources/create-from-file';
 import { clearAllData } from '@/lib/clear-all-data';
 import { useSettings } from '@/lib/runtime/client';
 import type { TableSchema } from '@/lib/wa-sqlite/types';
@@ -62,6 +66,88 @@ function savePanelSizes(sizes: number[]): void {
         // quota or permissions error
     }
 }
+
+// Tear down a source that imported zero tables so no empty zombie entry is
+// left behind. Best-effort: a failed cleanup is logged, not surfaced (the
+// user already gets a failure notice for the import itself).
+async function cleanupEmptySource(source: CreateFromFileResult['source']): Promise<void> {
+    try {
+        if (source.persistence === 'memory') {
+            await closeSqliteDb(source.dbFile);
+        } else {
+            await destroySqliteOpfs(source.dbFile, source.dbFile);
+        }
+        await deleteSource(source.id);
+    } catch (cleanupErr) {
+        console.warn('[data-sources] orphan source cleanup failed', cleanupErr);
+    }
+}
+
+// Build the user-facing notices for one import result (rename + per-table
+// failures + the empty-source removal). Pure: collects messages, decides
+// whether the source survived.
+function collectImportNotices(res: CreateFromFileResult): {
+    notices: string[];
+    succeeded: boolean;
+} {
+    const notices: string[] = [];
+    if (res.renamed) {
+        notices.push(`"${res.requestedName}" already exists — imported as "${res.finalName}".`);
+    }
+    for (const o of res.outcomes) {
+        if (o.status === 'failed') {
+            notices.push(
+                `Failed to import "${o.tableName}" into "${res.finalName}": ${o.error ?? 'unknown error'}`,
+            );
+        }
+    }
+    const succeeded = res.outcomes.some(
+        (o) => o.status === 'imported' || o.status === 'overwritten',
+    );
+    if (!succeeded) {
+        notices.push(`No tables were imported into "${res.finalName}" — source removed.`);
+    }
+    return { notices, succeeded };
+}
+
+// The selected source's detail pane, wrapped in a last-resort ErrorBoundary.
+// Extracted from the page body so the boundary's fallback `onClick` doesn't
+// sit five JSX-callback levels deep. The keyed `<Show>` at the call site
+// remounts this (and resets the boundary) on source switch.
+const SelectedSourceBoundary: Component<{
+    source: DataSource;
+    schemaTick: number;
+    onImport: (pinned?: string) => void;
+    onCreateView: () => void;
+    onSourceUpdated: () => void;
+    onRequestDelete: () => void;
+}> = (props) => (
+    <ErrorBoundary
+        fallback={(err) => (
+            <main class="h-full flex flex-col items-center justify-center gap-3 text-center p-6">
+                <div class="text-destructive text-3xl leading-none">⚠</div>
+                <p class="text-sm font-semibold">
+                    Something went wrong opening "{props.source.name}"
+                </p>
+                <p class="text-xs text-muted-foreground max-w-md whitespace-pre-wrap">
+                    {err instanceof Error ? err.message : String(err)}
+                </p>
+                <Button size="sm" variant="destructive" onClick={() => props.onRequestDelete()}>
+                    Delete data source
+                </Button>
+            </main>
+        )}
+    >
+        <SourceDetail
+            source={props.source}
+            schemaRefreshTick={props.schemaTick}
+            onImport={(pinned) => props.onImport(pinned)}
+            onCreateView={() => props.onCreateView()}
+            onSourceUpdated={() => props.onSourceUpdated()}
+            onRequestDeleteSource={() => props.onRequestDelete()}
+        />
+    </ErrorBoundary>
+);
 
 const DataSourcesPage: Component = () => {
     const [refreshTick, setRefreshTick] = createSignal(0);
@@ -192,40 +278,13 @@ const DataSourcesPage: Component = () => {
         for (const file of files) {
             try {
                 const res = await createSourceFromFile(file, persistence);
-                if (res.renamed) {
-                    notices.push(
-                        `"${res.requestedName}" already exists — imported as "${res.finalName}".`,
-                    );
-                }
-                for (const o of res.outcomes) {
-                    if (o.status === 'failed') {
-                        notices.push(
-                            `Failed to import "${o.tableName}" into "${res.finalName}": ${o.error ?? 'unknown error'}`,
-                        );
-                    }
-                }
-                const succeeded = res.outcomes.some(
-                    (o) => o.status === 'imported' || o.status === 'overwritten',
-                );
-                if (!succeeded) {
-                    // Don't leave an empty zombie source behind — the user
-                    // already gets a failure notice, no need to also expose
-                    // a 0-table entry they have to manually clean up.
-                    notices.push(
-                        `No tables were imported into "${res.finalName}" — source removed.`,
-                    );
-                    try {
-                        if (res.source.persistence === 'memory') {
-                            await closeSqliteDb(res.source.dbFile);
-                        } else {
-                            await destroySqliteOpfs(res.source.dbFile, res.source.dbFile);
-                        }
-                        await deleteSource(res.source.id);
-                    } catch (cleanupErr) {
-                        console.warn('[data-sources] orphan source cleanup failed', cleanupErr);
-                    }
-                } else {
+                const { notices: fileNotices, succeeded } = collectImportNotices(res);
+                notices.push(...fileNotices);
+                if (succeeded) {
                     lastId = res.source.id;
+                } else {
+                    // Don't leave an empty zombie source behind.
+                    await cleanupEmptySource(res.source);
                 }
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
@@ -330,6 +389,8 @@ const DataSourcesPage: Component = () => {
         <div class="h-svh flex flex-col bg-background text-foreground relative">
             <TopBar />
 
+            <SemanticIndexProgress />
+
             <div class="flex-1 min-h-0">
                 <Resizable
                     orientation="horizontal"
@@ -384,47 +445,17 @@ const DataSourcesPage: Component = () => {
                                 // boundary is a last-resort net so an unexpected
                                 // throw can't take the whole sources list down.
                                 <Show when={selectedId()} keyed>
-                                    {(_id) => (
-                                        <ErrorBoundary
-                                            fallback={(err) => (
-                                                <main class="h-full flex flex-col items-center justify-center gap-3 text-center p-6">
-                                                    <div class="text-destructive text-3xl leading-none">
-                                                        ⚠
-                                                    </div>
-                                                    <p class="text-sm font-semibold">
-                                                        Something went wrong opening "{s().name}"
-                                                    </p>
-                                                    <p class="text-xs text-muted-foreground max-w-md whitespace-pre-wrap">
-                                                        {err instanceof Error
-                                                            ? err.message
-                                                            : String(err)}
-                                                    </p>
-                                                    <Button
-                                                        size="sm"
-                                                        variant="destructive"
-                                                        onClick={() => {
-                                                            setDeleteError(null);
-                                                            setPendingDeleteId(s().id);
-                                                        }}
-                                                    >
-                                                        Delete data source
-                                                    </Button>
-                                                </main>
-                                            )}
-                                        >
-                                            <SourceDetail
-                                                source={s()}
-                                                schemaRefreshTick={schemaTick()}
-                                                onImport={(pinned) => handleOpenImport(pinned)}
-                                                onCreateView={() => setViewOpen(true)}
-                                                onSourceUpdated={() => refreshAll()}
-                                                onRequestDeleteSource={() => {
-                                                    setDeleteError(null);
-                                                    setPendingDeleteId(s().id);
-                                                }}
-                                            />
-                                        </ErrorBoundary>
-                                    )}
+                                    <SelectedSourceBoundary
+                                        source={s()}
+                                        schemaTick={schemaTick()}
+                                        onImport={(pinned) => handleOpenImport(pinned)}
+                                        onCreateView={() => setViewOpen(true)}
+                                        onSourceUpdated={() => refreshAll()}
+                                        onRequestDelete={() => {
+                                            setDeleteError(null);
+                                            setPendingDeleteId(s().id);
+                                        }}
+                                    />
                                 </Show>
                             )}
                         </Show>

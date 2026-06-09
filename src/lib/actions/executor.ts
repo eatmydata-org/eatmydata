@@ -1,4 +1,4 @@
-import type { Action, ActionOutputFormat, DataSource } from './types';
+import type { Action, ActionOutputFormat, DataSource, ResultBlock } from './types';
 import { resolveDb } from '@/lib/data-sources/resolver';
 import { runInSandbox } from '@/lib/sandbox/runtime';
 import { isEchartsOption, isEchartsOptionArray } from '@/lib/echarts/shape';
@@ -79,34 +79,11 @@ function findExprEnd(s: string, start: number): number {
             continue;
         }
         if (c === '"' || c === "'") {
-            const close = c;
-            i++;
-            while (i < s.length && s[i] !== close) {
-                if (s[i] === '\\') {
-                    i += 2;
-                    continue;
-                }
-                i++;
-            }
-            i++; // skip the closing quote (or step past EOF safely)
+            i = scanQuotedString(s, i + 1, c);
             continue;
         }
         if (c === '`') {
-            i++;
-            while (i < s.length && s[i] !== '`') {
-                if (s[i] === '\\') {
-                    i += 2;
-                    continue;
-                }
-                if (s[i] === '$' && s[i + 1] === '{') {
-                    // Nested interpolation inside a template literal — recurse
-                    // so its inner `}` doesn't bleed into our brace depth.
-                    i = findExprEnd(s, i + 2);
-                    continue;
-                }
-                i++;
-            }
-            i++; // skip the closing backtick
+            i = scanTemplateLiteral(s, i + 1);
             continue;
         }
         if (c === '{') {
@@ -123,6 +100,44 @@ function findExprEnd(s: string, start: number): number {
         i++;
     }
     return i;
+}
+
+/**
+ * Scan a `'...'`/`"..."` string body starting at `i` (the first char after the
+ * opening quote `close`). Returns the index ONE PAST the closing quote (or past
+ * EOF safely). Inside the string, `\` escapes the next char and braces don't
+ * count.
+ */
+function scanQuotedString(s: string, i: number, close: string): number {
+    while (i < s.length && s[i] !== close) {
+        if (s[i] === '\\') {
+            i += 2;
+            continue;
+        }
+        i++;
+    }
+    return i + 1; // skip the closing quote (or step past EOF safely)
+}
+
+/**
+ * Scan a `` `...` `` template-literal body starting at `i` (the first char after
+ * the opening backtick). Returns the index ONE PAST the closing backtick. A
+ * nested `${...}` recurses through `findExprEnd` so its inner `}` doesn't bleed
+ * into the caller's brace depth.
+ */
+function scanTemplateLiteral(s: string, i: number): number {
+    while (i < s.length && s[i] !== '`') {
+        if (s[i] === '\\') {
+            i += 2;
+            continue;
+        }
+        if (s[i] === '$' && s[i + 1] === '{') {
+            i = findExprEnd(s, i + 2);
+            continue;
+        }
+        i++;
+    }
+    return i + 1; // skip the closing backtick
 }
 
 /**
@@ -193,34 +208,13 @@ export type ActionExecution = {
 export async function executeAction(action: Action): Promise<ActionExecution> {
     const startedAt = Date.now();
     const id = crypto.randomUUID();
-    const fetchSummaries: DataSourceFetchResult[] = [];
-    const globals: Record<string, unknown> = {};
-    let topError: string | undefined;
 
     const db = await resolveDb(action.dataSourceId);
-
-    for (const ds of action.dataSources) {
-        try {
-            const result = await fetchDataSource(db, ds);
-            fetchSummaries.push({
-                name: ds.name,
-                rowCount: result.rows.length,
-                columns: result.columns,
-                truncated: result.truncated,
-            });
-            globals[ds.name] = result.rows;
-        } catch (e) {
-            const error = e instanceof Error ? e.message : String(e);
-            fetchSummaries.push({
-                name: ds.name,
-                rowCount: 0,
-                columns: [],
-                truncated: false,
-                error,
-            });
-            topError = topError ?? `Data source ${ds.name}: ${error}`;
-        }
-    }
+    const { fetchSummaries, globals, fetchError } = await fetchAllDataSources(
+        db,
+        action.dataSources,
+    );
+    let topError: string | undefined = fetchError;
 
     const kind = action.kind ?? 'code';
     let output: unknown = undefined;
@@ -232,21 +226,7 @@ export async function executeAction(action: Action): Promise<ActionExecution> {
             output = result.output;
             stdout = result.stdout;
         } else {
-            const parts = [`Sandbox failure (phase: ${result.phase})`];
-            if (result.line !== undefined) parts.push(`line: ${result.line}`);
-            parts.push(`message: ${result.error}`);
-            if (result.stack) parts.push(`stack: ${result.stack}`);
-            // List the globals that WERE bound. If a ReferenceError points
-            // at one of these names the code line is at fault; if it points
-            // at a name NOT in this list, the Coder wrote a name that
-            // doesn't match any saved data source (typo / model drift).
-            const boundNames = Object.keys(globals);
-            parts.push(
-                `bound data-source globals: ${
-                    boundNames.length ? boundNames.map((n) => `\`${n}\``).join(', ') : '(none)'
-                }`,
-            );
-            topError = parts.join('\n');
+            topError = formatExecutionError(result, globals);
             stdout = result.stdout;
         }
     } else if (!action.code) {
@@ -279,21 +259,170 @@ export async function executeAction(action: Action): Promise<ActionExecution> {
  * Duck-type the format of `__output` from its runtime shape. The Coder no
  * longer declares the output format; the renderer infers it here.
  *
- * Rules:
- *   - string → 'markdown' (covers the common "produce a tabular markdown answer" path)
- *   - array of ECharts options → 'echarts' (multi-chart dashboard form)
- *   - object with ECharts-shaped top-level keys (series/xAxis/yAxis/grid) → 'echarts'
- *   - everything else (objects without ECharts shape, arrays of other things,
- *     numbers, etc.) → 'json'
+ * The primary path is the composable BLOCK model: the Coder builds
+ * `md()`/`chart()`/`table()` blocks and composes them with `present(...)`,
+ * which sets `__output` to a `{ __kind:'blocks', blocks }` wrapper. The
+ * legacy bare-value shapes are retained for backward compatibility (results
+ * already persisted in IDB) and as a convenience for a Coder that returns a
+ * single bare value.
+ *
+ * Order is load-bearing — `blocks` first; ECharts before the flat-record
+ * array check, so a bare chart array isn't mistaken for a table:
+ *   - block wrapper / bare block / array of blocks → 'blocks'
+ *   - string → 'markdown'
+ *   - array of ECharts options / single ECharts option → 'echarts'
+ *   - array of flat scalar records → 'blocks' (one table block, convenience)
+ *   - everything else → 'json'
  *
  * 'html' is not auto-inferred — it requires explicit user intent and would
  * round-trip through a future explicit signal if we ever bring it back.
  */
 export function inferOutputFormat(output: unknown): ActionOutputFormat {
+    if (isBlocksOutput(output)) return 'blocks';
     if (typeof output === 'string') return 'markdown';
     if (isEchartsOptionArray(output)) return 'echarts';
     if (isEchartsOption(output)) return 'echarts';
+    if (isFlatRecordArray(output)) return 'blocks';
     return 'json';
+}
+
+type WireBlock = {
+    __kind: 'block';
+    type: 'markdown' | 'chart' | 'table';
+    [k: string]: unknown;
+};
+
+/** A single block tag produced by `md()`/`chart()`/`table()` in the sandbox. */
+function isWireBlock(x: unknown): x is WireBlock {
+    if (!x || typeof x !== 'object' || Array.isArray(x)) return false;
+    const o = x as Record<string, unknown>;
+    return (
+        o.__kind === 'block' && (o.type === 'markdown' || o.type === 'chart' || o.type === 'table')
+    );
+}
+
+/**
+ * The composable-output shapes the renderer treats as `'blocks'`: the
+ * `present(...)` wrapper, a single bare block, or a bare array of blocks.
+ */
+export function isBlocksOutput(x: unknown): boolean {
+    if (
+        x &&
+        typeof x === 'object' &&
+        !Array.isArray(x) &&
+        (x as Record<string, unknown>).__kind === 'blocks' &&
+        Array.isArray((x as { blocks?: unknown }).blocks)
+    ) {
+        return true;
+    }
+    if (isWireBlock(x)) return true;
+    return Array.isArray(x) && x.length > 0 && x.every(isWireBlock);
+}
+
+/**
+ * A non-empty array whose every element is a plain object of SCALAR values
+ * (string | number | boolean | null | undefined). Nested objects/arrays
+ * disqualify it — those stay JSON. ECharts arrays are excluded by the caller
+ * ordering (the ECharts checks run first).
+ */
+function isFlatRecordArray(x: unknown): x is Array<Record<string, unknown>> {
+    if (!Array.isArray(x) || x.length === 0) return false;
+    return x.every((el) => {
+        if (!el || typeof el !== 'object' || Array.isArray(el)) return false;
+        return Object.values(el as Record<string, unknown>).every(
+            (v) =>
+                v === null ||
+                v === undefined ||
+                typeof v === 'string' ||
+                typeof v === 'number' ||
+                typeof v === 'boolean',
+        );
+    });
+}
+
+/** Union of keys across all rows, preserving first-seen insertion order. */
+export function deriveTableColumns(rows: Array<Record<string, unknown>>): string[] {
+    const seen = new Set<string>();
+    for (const row of rows) for (const k of Object.keys(row)) seen.add(k);
+    return [...seen];
+}
+
+/**
+ * Coerce a `table(rows, { columns })` spec to a list of STRING field names.
+ * The model often reaches for AG-Grid-style column descriptors
+ * (`{ field, headerName }`) or other objects; a non-string `field` crashes
+ * AG-Grid (`field.includes` in `initDotNotation`). We accept strings as-is and
+ * pull a name out of objects (`field`/`name`/`key`/`id`); anything unusable
+ * falls back to deriving columns from the row keys.
+ */
+export function normalizeTableColumns(
+    columns: unknown,
+    rows: Array<Record<string, unknown>>,
+): string[] {
+    if (!Array.isArray(columns) || columns.length === 0) return deriveTableColumns(rows);
+    const names: string[] = [];
+    for (const c of columns) {
+        if (typeof c === 'string') {
+            names.push(c);
+        } else if (c && typeof c === 'object') {
+            const o = c as Record<string, unknown>;
+            const cand = o.field ?? o.name ?? o.key ?? o.id;
+            if (typeof cand === 'string') names.push(cand);
+        }
+        // Non-string, non-extractable entries are dropped rather than passed
+        // through as a bad colDef field.
+    }
+    return names.length > 0 ? names : deriveTableColumns(rows);
+}
+
+/**
+ * Normalize `__output` into the renderer's `ResultBlock[]`. Handles the
+ * `present(...)` wrapper, a bare block, a bare array of blocks, and (as a
+ * convenience) a bare array of flat records → a single table block. Maps the
+ * wire `type` field to `kind` and derives table columns when absent. Returns
+ * `[]` if nothing applies (the renderer falls back to JSON).
+ */
+export function toBlocks(output: unknown): ResultBlock[] {
+    let wire: WireBlock[];
+    if (
+        output &&
+        typeof output === 'object' &&
+        !Array.isArray(output) &&
+        (output as Record<string, unknown>).__kind === 'blocks' &&
+        Array.isArray((output as { blocks?: unknown }).blocks)
+    ) {
+        wire = (output as { blocks: unknown[] }).blocks.filter(isWireBlock);
+    } else if (isWireBlock(output)) {
+        wire = [output];
+    } else if (Array.isArray(output) && output.length > 0 && output.every(isWireBlock)) {
+        wire = output as WireBlock[];
+    } else if (isFlatRecordArray(output)) {
+        return [{ kind: 'table', columns: deriveTableColumns(output), rows: output }];
+    } else {
+        return [];
+    }
+    return wire.map(wireBlockToResultBlock);
+}
+
+function wireBlockToResultBlock(b: WireBlock): ResultBlock {
+    if (b.type === 'markdown') {
+        return { kind: 'markdown', text: String(b.text ?? '') };
+    }
+    if (b.type === 'chart') {
+        return {
+            kind: 'chart',
+            option: (b.option ?? {}) as Record<string, unknown>,
+        };
+    }
+    const rows = (Array.isArray(b.rows) ? b.rows : []) as Array<Record<string, unknown>>;
+    const columns = normalizeTableColumns(b.columns, rows);
+    return {
+        kind: 'table',
+        columns,
+        rows,
+        ...(typeof b.title === 'string' ? { title: b.title } : {}),
+        ...(typeof b.caption === 'string' ? { caption: b.caption } : {}),
+    };
 }
 
 /**
@@ -322,6 +451,72 @@ export async function hashActionParams(params: {
 
 type DbLike = { execFull: (sql: string) => Promise<unknown> | unknown };
 type Fetched = { columns: string[]; rows: Array<Record<string, unknown>>; truncated: boolean };
+
+/**
+ * Fetch every data source's rows, binding each result set as a named global for
+ * the sandbox. Per-source failures are captured into the summary and the FIRST
+ * one becomes the top-level error (so the sandbox step is skipped).
+ */
+async function fetchAllDataSources(
+    db: DbLike,
+    dataSources: DataSource[],
+): Promise<{
+    fetchSummaries: DataSourceFetchResult[];
+    globals: Record<string, unknown>;
+    fetchError: string | undefined;
+}> {
+    const fetchSummaries: DataSourceFetchResult[] = [];
+    const globals: Record<string, unknown> = {};
+    let fetchError: string | undefined;
+
+    for (const ds of dataSources) {
+        try {
+            const result = await fetchDataSource(db, ds);
+            fetchSummaries.push({
+                name: ds.name,
+                rowCount: result.rows.length,
+                columns: result.columns,
+                truncated: result.truncated,
+            });
+            globals[ds.name] = result.rows;
+        } catch (e) {
+            const error = e instanceof Error ? e.message : String(e);
+            fetchSummaries.push({
+                name: ds.name,
+                rowCount: 0,
+                columns: [],
+                truncated: false,
+                error,
+            });
+            fetchError = fetchError ?? `Data source ${ds.name}: ${error}`;
+        }
+    }
+
+    return { fetchSummaries, globals, fetchError };
+}
+
+/**
+ * Build the top-level error string for a sandbox failure, including the bound
+ * data-source globals so a ReferenceError can be triaged: a name IN this list
+ * means the code line is at fault; a name NOT in it means the Coder wrote a
+ * name that doesn't match any saved data source (typo / model drift).
+ */
+function formatExecutionError(
+    result: Extract<Awaited<ReturnType<typeof runInSandbox>>, { ok: false }>,
+    globals: Record<string, unknown>,
+): string {
+    const parts = [`Sandbox failure (phase: ${result.phase})`];
+    if (result.line !== undefined) parts.push(`line: ${result.line}`);
+    parts.push(`message: ${result.error}`);
+    if (result.stack) parts.push(`stack: ${result.stack}`);
+    const boundNames = Object.keys(globals);
+    parts.push(
+        `bound data-source globals: ${
+            boundNames.length ? boundNames.map((n) => `\`${n}\``).join(', ') : '(none)'
+        }`,
+    );
+    return parts.join('\n');
+}
 
 async function fetchDataSource(db: DbLike, ds: DataSource): Promise<Fetched> {
     const raw = (await db.execFull(ds.query)) as QueryResult;

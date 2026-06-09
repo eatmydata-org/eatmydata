@@ -9,6 +9,7 @@ export {
     closeSqliteDb,
     destroySqliteOpfs,
     importDemoIntoOpfs,
+    sqliteEmbed,
 } from '@/lib/wa-sqlite/client';
 
 export type { WaSqliteDb as SqliteDb } from '@/lib/wa-sqlite/db';

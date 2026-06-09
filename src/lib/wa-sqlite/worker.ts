@@ -12,6 +12,11 @@
 import * as Comlink from 'comlink';
 import { WaSqliteDbInstanceAccessor } from './accessor';
 
+// The C `vector_search` vtab now embeds queries with an in-module C call (the
+// BGE engine is compiled into wa-sqlite.wasm) — no embed hook to install. The
+// model is lazy-loaded by the accessor: maybeWarmSemanticSearch() on opening a
+// DB that carries a semantic index, and embedTexts() while indexing. A tab that
+// never touches semantic search never loads it.
 const accessor = new WaSqliteDbInstanceAccessor();
 Comlink.expose(accessor);
 

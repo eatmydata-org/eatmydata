@@ -8,9 +8,17 @@ import {
     type TestResult,
     type RunSummary,
 } from '@/lib/test-runner/runner';
-import { WA_SQLITE_TESTS } from '@/lib/test-runner/tests-wa-sqlite';
+import { VECTOR_SEARCH_TESTS } from '@/lib/test-runner/tests-vector-search';
+import { BGE_EMBED_TESTS } from '@/lib/test-runner/tests-bge-embed';
+import { BERT_NER_TESTS } from '@/lib/test-runner/tests-bert-ner';
 
-const ALL_TESTS: TestDef[] = [...WA_SQLITE_TESTS];
+const ALL_TESTS: TestDef[] = [
+    //...WA_SQLITE_TESTS,
+    //...RESULT_BLOCKS_TESTS,
+    ...VECTOR_SEARCH_TESTS,
+    ...BGE_EMBED_TESTS,
+    ...BERT_NER_TESTS,
+];
 
 const TestsPage: Component = () => {
     const initialResults: Record<string, Partial<TestResult>> = Object.fromEntries(

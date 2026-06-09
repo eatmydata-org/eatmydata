@@ -11,11 +11,19 @@
 import * as Comlink from 'comlink';
 import { WaSqliteDb } from './db';
 import { WaSqliteDbInstanceAccessor } from './accessor';
-
-declare const self: DedicatedWorkerGlobalScope;
-void self;
+import { warmSemanticModel } from './semantic-embed';
 
 export class WaSqliteFactory {
+    /**
+     * Load the BGE GGUF into the shared wa-sqlite module so the C
+     * `vector_search` vtab can embed query phrases. In production this warm is
+     * triggered automatically (opening an indexed DB, or indexing); the testbed
+     * builds its sidecar by hand so it warms explicitly before querying.
+     */
+    async warmSemanticSearch(): Promise<void> {
+        await warmSemanticModel();
+    }
+
     /**
      * Construct a fresh `WaSqliteDb` and return a Comlink proxy. The
      * underlying instance lives in this worker; the proxy travels back to

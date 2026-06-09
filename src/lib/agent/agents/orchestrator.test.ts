@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunCtx, SubAgentResult } from '../agent-def';
 import type { AgentControls } from '../loop';
 import type { SavedDataSourcePreview } from '@/lib/types';
-import type { Action } from '@/lib/actions/types';
+import type { Action, DataSource } from '@/lib/actions/types';
 
 // Mock the live drafts store so the executor doesn't talk to a real
 // BroadcastChannel / IndexedDB during tests. We don't assert anything on
@@ -926,6 +926,181 @@ describe('orchestrator work_on_action: data sources on create_new over existing 
 });
 
 /**
+ * Regression: iterating an action whose LIVE draft previews have outgrown the
+ * COMMITTED action.
+ *
+ * Symptom (reported in the field): the Coder writes code referencing all 4
+ * data sources and its own `run_in_sandbox` passes (it binds the full preview
+ * set), but the analysis-review execution fails with
+ *   `ReferenceError: revenue_by_country_and_month is not defined`
+ *   `bound data-source globals: \`revenue_by_segment_and_month\`, \`total_revenue_by_segment\``
+ * — exactly 2 of the 4 sources bound.
+ *
+ * Cause: in the `unchanged === true` branch the runtime used to substitute
+ * `current.action.dataSources` (the COMMITTED set) for `executeAction`. But
+ * `unchanged` is measured against `priorPreviews` = the DRAFT's live previews,
+ * not the committed set. When a prior in-turn iteration (rejection → refine)
+ * extended the draft's previews without committing, the committed array is a
+ * STALE strict subset; `previewsMatch` still fires, so the executor bound the
+ * subset while the Coder built against the full `previews`. The fix derives
+ * `dataSources` from `previews` always, reusing committed rows (stable ids)
+ * only where name AND query match.
+ */
+describe('orchestrator work_on_action: draft outgrew committed action (unchanged branch)', () => {
+    // The two sources the action was originally committed with — these are
+    // the only ones on `current.action.dataSources`.
+    const committedSeg1: DataSource = {
+        id: 'ds-seg-1',
+        name: 'revenue_by_segment_and_month',
+        type: 'sql',
+        query: 'SELECT segment, month, revenue FROM v_rev_by_seg_month',
+        semanticDescription: 'Monthly revenue grouped by loyalty tier segment.',
+        typeDeclaration:
+            'type RevenueBySegmentAndMonth = Array<{ segment: string; month: string; revenue: number }>;\ndeclare const revenue_by_segment_and_month: RevenueBySegmentAndMonth;',
+    };
+    const committedSeg2: DataSource = {
+        id: 'ds-seg-2',
+        name: 'total_revenue_by_segment',
+        type: 'sql',
+        query: 'SELECT segment, total_revenue FROM v_total_rev_by_seg',
+        semanticDescription: 'Total revenue contribution per loyalty tier segment.',
+        typeDeclaration:
+            'type TotalRevenueBySegment = Array<{ segment: string; total_revenue: number }>;\ndeclare const total_revenue_by_segment: TotalRevenueBySegment;',
+    };
+
+    // The 4 previews living on the LIVE draft. The two segment previews share
+    // name+query with the committed sources; the two country previews were
+    // added in a prior in-turn iteration that never committed.
+    const segPreview1: SavedDataSourcePreview = {
+        ...sampleDataSource,
+        name: committedSeg1.name,
+        query: committedSeg1.query,
+    };
+    const segPreview2: SavedDataSourcePreview = {
+        ...sampleDataSource,
+        name: committedSeg2.name,
+        query: committedSeg2.query,
+    };
+    const countryPreview1: SavedDataSourcePreview = {
+        ...sampleDataSource,
+        name: 'revenue_by_country_and_month',
+        query: 'SELECT country, month, revenue FROM v_rev_by_country_month',
+    };
+    const countryPreview2: SavedDataSourcePreview = {
+        ...sampleDataSource,
+        name: 'total_revenue_by_country',
+        query: 'SELECT country, total_revenue FROM v_total_rev_by_country',
+    };
+    const livePreviews = [segPreview1, segPreview2, countryPreview1, countryPreview2];
+
+    it('binds ALL live previews (not the stale committed subset) when the planner returns an unchanged set', async () => {
+        executeActionMock.mockClear();
+
+        const committedAction: Action = {
+            id: 'committed-action-id',
+            name: 'Revenue Analysis',
+            description: '',
+            // STALE: only the two segment sources were committed.
+            dataSources: [committedSeg1, committedSeg2],
+            chatLog: [],
+            createdAt: 0,
+            updatedAt: 0,
+            code: 'const x = revenue_by_segment_and_month;',
+            kind: 'code',
+            currentVersionId: 'committed-v-1',
+        };
+
+        // The active draft: `dataSources` (live previews) = 4, but the
+        // committed `action.dataSources` = 2. `priorPreviews` is read off the
+        // draft's `dataSources`, so it matches the planner's 4 → unchanged.
+        activeActionMock.mockReturnValueOnce({
+            id: committedAction.id,
+            actionName: committedAction.name,
+            intent: 'old intent',
+            action: committedAction,
+            dataSources: livePreviews,
+            code: committedAction.code,
+            codeKind: committedAction.kind,
+            versions: [],
+            currentVersionId: committedAction.currentVersionId,
+            inflight: false,
+        });
+        executeActionMock.mockResolvedValueOnce({
+            id: 'exec-iter',
+            actionId: committedAction.id,
+            versionId: undefined as unknown as string,
+            output: 'ok',
+            error: null,
+            createdAt: 0,
+        } as unknown as Awaited<ReturnType<typeof executeActionMock>>);
+
+        const waitForApproval = vi.fn().mockResolvedValue({ approved: true });
+        const def = orchestratorAgent();
+        // The planner returns the SAME 4 previews (name+query) as the draft —
+        // a cosmetic-refinement iteration where no source changed — so the
+        // orchestrator's `unchanged` flag fires.
+        const spawn = vi.fn(async (childId: string): Promise<SubAgentResult> => {
+            if (childId === 'planner') {
+                return { ok: true, summary: 'planned', data: livePreviews };
+            }
+            return {
+                ok: true,
+                summary: 'coded',
+                data: {
+                    kind: 'code',
+                    // References all 4 sources — exactly what the Coder
+                    // validated against its 4-preview sandbox globals.
+                    code: '__output = revenue_by_segment_and_month.length + total_revenue_by_segment.length + revenue_by_country_and_month.length + total_revenue_by_country.length;',
+                },
+            };
+        });
+        const ctx = makeCtx({
+            controls: makeControls({ waitForApproval }),
+            spawn,
+        });
+
+        const res = await def.toolExecutors.work_on_action!(
+            {
+                name: 'Revenue Analysis',
+                description: '',
+                intent: 'Make the charts prettier',
+            },
+            ctx,
+        );
+        expect(res.ok).toBe(true);
+
+        const exec = executeActionMock.mock.calls[0]?.[0] as
+            | { dataSources: DataSource[] }
+            | undefined;
+        expect(exec).toBeDefined();
+        const bound = exec!.dataSources ?? [];
+        const boundNames = bound.map((d) => d.name).sort();
+
+        // The bug: only the 2 committed segment sources were bound.
+        expect(boundNames).toEqual([
+            'revenue_by_country_and_month',
+            'revenue_by_segment_and_month',
+            'total_revenue_by_country',
+            'total_revenue_by_segment',
+        ]);
+        // Be explicit about the sources that used to vanish.
+        expect(boundNames).toContain('revenue_by_country_and_month');
+        expect(boundNames).toContain('total_revenue_by_country');
+
+        // Stable-id guarantee: the two sources that genuinely match the
+        // committed set (name AND query) reuse their committed ids…
+        const byName = new Map(bound.map((d) => [d.name, d] as const));
+        expect(byName.get('revenue_by_segment_and_month')?.id).toBe('ds-seg-1');
+        expect(byName.get('total_revenue_by_segment')?.id).toBe('ds-seg-2');
+        // …while the two newly-added country sources get fresh ids (the
+        // committed set had none to reuse).
+        expect(byName.get('revenue_by_country_and_month')?.id).toBeTruthy();
+        expect(byName.get('revenue_by_country_and_month')?.id).not.toBe('ds-seg-1');
+        expect(byName.get('total_revenue_by_country')?.id).toBeTruthy();
+    });
+});
+
+/**
  * Samples are agent-runtime only. They must never appear on the persisted
  * Action or ActionVersion — putting perturbed/synthetic rows there made
  * the Action panel render synthetic data as "results" after reload.
@@ -1198,5 +1373,30 @@ describe('buildPlannerKickoffInstruction', () => {
         // Previous code is surfaced so the Planner sees how the sources
         // were consumed when deciding what to rename / keep.
         expect(out).toContain('const x = top_customers.length;');
+    });
+
+    it('prepends the DATABASE SCHEMA block when a manifest is provided (fresh start)', async () => {
+        const { buildPlannerKickoffInstruction } = await import('./orchestrator');
+        const out = buildPlannerKickoffInstruction(
+            'do X',
+            [],
+            undefined,
+            'Tables:\n  foo(id:INTEGER PK)',
+        );
+        expect(out).toContain('do X');
+        expect(out).toContain('DATABASE SCHEMA');
+        expect(out).toContain('foo(id:INTEGER PK)');
+    });
+
+    it('includes the schema manifest on a REPLAN too', async () => {
+        const { buildPlannerKickoffInstruction } = await import('./orchestrator');
+        const out = buildPlannerKickoffInstruction(
+            'add breakdown',
+            [sampleDataSource],
+            undefined,
+            'Semantic search is available — match these columns by MEANING (not LIKE): claims.description.',
+        );
+        expect(out).toMatch(/REPLAN/);
+        expect(out).toContain('claims.description');
     });
 });

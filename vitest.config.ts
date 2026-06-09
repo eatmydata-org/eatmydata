@@ -25,11 +25,11 @@ function workerVersionsStub(): Plugin {
 export default defineConfig({
     plugins: [workerVersionsStub()],
     // Mirror the real build's global defines (vite.config.ts) so the modules
-    // that read these bare globals at import time — src/lib/pii/worker.ts's
-    // ASSET_BASE (PII_ASSET_BASE) and src/lib/data-sources/demo-source.ts's
+    // that read these bare globals at import time — src/lib/transformers/worker.ts's
+    // ASSET_BASE (TRANSFORMERS_ASSET_BASE) and src/lib/data-sources/demo-source.ts's
     // ASSET_BASE (DEMO_ASSET_BASE) — can load under vitest.
     define: {
-        PII_ASSET_BASE: JSON.stringify('/test/tiny-pii'),
+        TRANSFORMERS_ASSET_BASE: JSON.stringify('/test/transformers'),
         DEMO_ASSET_BASE: JSON.stringify('/test/demo'),
     },
     resolve: {

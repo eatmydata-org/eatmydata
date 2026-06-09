@@ -2,6 +2,7 @@ import { SolidMarkdown } from 'solid-markdown';
 import remarkGfm from 'remark-gfm';
 import { For, Show, createMemo, type Component } from 'solid-js';
 import { parseIncompleteMarkdown } from '@/lib/remend';
+import { capMarkdownTables } from '@/lib/markdown/cap-tables';
 
 type StreamedMarkdownProps = {
     content: string;
@@ -28,9 +29,10 @@ const TextNode: Component<{ node: { value: string } }> = (props) => {
 };
 
 export function StreamedMarkdown(props: StreamedMarkdownProps) {
-    const prepared = createMemo(() =>
-        props.streaming ? parseIncompleteMarkdown(props.content) : props.content,
-    );
+    const prepared = createMemo(() => {
+        const capped = capMarkdownTables(props.content);
+        return props.streaming ? parseIncompleteMarkdown(capped) : capped;
+    });
 
     return (
         <div class="sd-bubble" data-streaming={props.streaming ? 'true' : undefined}>

@@ -1,9 +1,18 @@
-import { For, Show, createMemo, createResource, createSignal, type Component } from 'solid-js';
+import {
+    For,
+    Show,
+    createMemo,
+    createResource,
+    createSignal,
+    type Component,
+    type JSX,
+} from 'solid-js';
 import { Button } from '@/registry/ui/button';
 import { Badge } from '@/registry/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/registry/ui/popover';
 import type { DataSource } from '@/lib/data-sources/types';
 import { getSourceDb, listTableMeta, deleteTableMeta } from '@/lib/data-sources/db';
+import { indexSourceForSearch } from '@/lib/data-sources/semantic-index';
 import { listSources, putSource } from '@/lib/data-sources/store';
 import { dedupHumanName } from '@/lib/data-sources/identifier';
 import { deleteActionCascade, findActionsReferencingTable } from '@/lib/actions/store';
@@ -16,6 +25,10 @@ import { CascadeDropDialog, type CascadeChoice } from './cascade-drop-dialog';
 import { EditableName } from '@/components/editable-name';
 import { PaneHeader, PaneHeaderActions } from '@/components/pane-header';
 import { isUnreadableDbError, UNREADABLE_DB_MESSAGE } from '@/lib/wa-sqlite/validate';
+
+function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+}
 
 type Props = {
     source: DataSource;
@@ -33,6 +46,32 @@ type Props = {
 export const SourceDetail: Component<Props> = (props) => {
     const [selectedTable, setSelectedTable] = createSignal<string | null>(null);
     const [gridRefreshTick, setGridRefreshTick] = createSignal(0);
+
+    // "Index for search": embed high-cardinality free-text columns on-device so
+    // the assistant can match them by meaning (vector_search) instead of LIKE.
+    // Per-column progress streams to the page-level banner; this local state
+    // just drives the button label and a final notice (errors / "nothing to do").
+    const [indexing, setIndexing] = createSignal(false);
+    const [indexNotice, setIndexNotice] = createSignal<string | null>(null);
+    const runIndexForSearch = async () => {
+        if (indexing()) return;
+        setIndexing(true);
+        setIndexNotice(null);
+        try {
+            const cols = await indexSourceForSearch(props.source);
+            const plural = cols.length === 1 ? '' : 's';
+            setIndexNotice(
+                cols.length > 0
+                    ? `Indexed ${cols.length} text column${plural} for semantic search: ${cols.join(', ')}.`
+                    : 'No high-cardinality free-text columns found to index in this source.',
+            );
+            props.onSourceUpdated?.();
+        } catch (e) {
+            setIndexNotice(`Indexing failed: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setIndexing(false);
+        }
+    };
 
     const refreshKey = createMemo(() => `${props.source.id}:${props.schemaRefreshTick}`);
 
@@ -60,11 +99,7 @@ export const SourceDetail: Component<Props> = (props) => {
                     .map((t) => ({ ...t, meta: metaByName.get(t.name) })),
             };
         } catch (e) {
-            const error = isUnreadableDbError(e)
-                ? UNREADABLE_DB_MESSAGE
-                : e instanceof Error
-                  ? e.message
-                  : String(e);
+            const error = isUnreadableDbError(e) ? UNREADABLE_DB_MESSAGE : errorMessage(e);
             return { ok: false, error };
         }
     });
@@ -176,6 +211,15 @@ export const SourceDetail: Component<Props> = (props) => {
         props.onSourceUpdated?.();
     };
 
+    const headerSummary = () => {
+        if (props.source.kind === 'demo') return 'Built-in demo data';
+        const tableCount = tablesList().length;
+        const viewCount = viewsList().length;
+        const tableLabel = `${tableCount} table${tableCount === 1 ? '' : 's'}`;
+        const viewLabel = `${viewCount} view${viewCount === 1 ? '' : 's'}`;
+        return `${tableLabel} · ${viewLabel}`;
+    };
+
     return (
         <main class="h-full min-w-0 flex flex-col overflow-hidden">
             <PaneHeader>
@@ -188,9 +232,7 @@ export const SourceDetail: Component<Props> = (props) => {
                     inputClass="text-sm font-semibold bg-transparent border-b border-primary px-0.5 outline-none w-[28ch]"
                 />
                 <span class="text-[10px] text-muted-foreground whitespace-nowrap">
-                    {props.source.kind === 'demo'
-                        ? 'Built-in demo data'
-                        : `${tablesList().length} table${tablesList().length === 1 ? '' : 's'} · ${viewsList().length} view${viewsList().length === 1 ? '' : 's'}`}
+                    {headerSummary()}
                     <span class="mx-1">·</span>
                     <span title={new Date(props.source.createdAt).toLocaleString()}>
                         created {formatAgo(props.source.createdAt)}
@@ -203,6 +245,15 @@ export const SourceDetail: Component<Props> = (props) => {
                     <Button size="sm" variant="secondary" onClick={() => props.onCreateView()}>
                         + View
                     </Button>
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={indexing()}
+                        onClick={() => void runIndexForSearch()}
+                        title="Embed free-text columns on-device so the assistant can match them by meaning (vector_search) instead of LIKE. First run downloads the embeddings model (~33 MB)."
+                    >
+                        {indexing() ? 'Indexing…' : 'Index for search'}
+                    </Button>
                     <SourceInfoPopover source={props.source} />
                     <Button
                         size="sm"
@@ -214,6 +265,20 @@ export const SourceDetail: Component<Props> = (props) => {
                     </Button>
                 </PaneHeaderActions>
             </PaneHeader>
+            <Show when={indexNotice()}>
+                <div class="border-b bg-muted/40 px-3 py-1.5 text-xs flex items-center gap-2">
+                    <span class="text-foreground/80 min-w-0 truncate" title={indexNotice()!}>
+                        {indexNotice()}
+                    </span>
+                    <button
+                        type="button"
+                        class="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => setIndexNotice(null)}
+                    >
+                        dismiss
+                    </button>
+                </div>
+            </Show>
             <ConfirmDialog
                 open={pendingDrop() !== null}
                 onOpenChange={(o) => !o && setPendingDrop(null)}
@@ -357,7 +422,7 @@ export const SourceDetail: Component<Props> = (props) => {
     );
 };
 
-const SectionHeader: Component<{ children: any }> = (props) => (
+const SectionHeader: Component<{ children: JSX.Element }> = (props) => (
     <div class="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
         {props.children}
     </div>

@@ -1,12 +1,12 @@
-import { For, Show, createSignal, createEffect, onCleanup, type Component } from 'solid-js';
+import { Show, type Component } from 'solid-js';
 import type { ActionExecution } from '@/lib/actions/executor';
+import { toBlocks } from '@/lib/actions/executor';
 import type { ActionOutputFormat } from '@/lib/actions/types';
+import { MAX_HTML_CHARS, MAX_JSON_PRE_CHARS } from '@/lib/actions/render-limits';
 import { StreamedMarkdown } from './streamed-markdown';
 import { sanitizeHtml } from '@/lib/sanitize-html';
-import { loadEchartsCore, type EChartsInstance } from '@/lib/echarts/loader';
-import { isEchartsOption, isEchartsOptionArray } from '@/lib/echarts/shape';
-import { patchEchartsOption } from '@/lib/echarts/patch-option';
-import { createSyncController, type SyncController } from '@/lib/echarts/sync-controller';
+import { EChartsDashboard } from './echarts-dashboard';
+import { ResultBlocks } from './result-blocks';
 
 type Props = {
     result: ActionExecution;
@@ -45,19 +45,16 @@ const OutputRenderer: Component<{
 }> = (props) => {
     return (
         <div>
+            <Show when={props.format === 'blocks'}>
+                <BlocksOrJson output={props.output} />
+            </Show>
             <Show when={props.format === 'markdown'}>
                 <div class="rounded-lg border bg-card px-4 py-3 text-sm">
                     <StreamedMarkdown content={String(props.output ?? '')} streaming={false} />
                 </div>
             </Show>
             <Show when={props.format === 'html'}>
-                <div
-                    class="rounded-lg border bg-card px-4 py-3 prose prose-sm max-w-none"
-                    // Action output is LLM-authored sandbox HTML (untrusted);
-                    // sanitizeHtml() strips scripts/handlers/javascript: URLs.
-                    // eslint-disable-next-line solid/no-innerhtml -- sanitized above
-                    innerHTML={sanitizeHtml(String(props.output ?? ''))}
-                />
+                <HtmlOutput output={props.output} />
             </Show>
             <Show when={props.format === 'json'}>
                 <pre class="rounded-lg border bg-card px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words overflow-auto">
@@ -71,115 +68,58 @@ const OutputRenderer: Component<{
     );
 };
 
-/**
- * Normalize the raw `__output` value into a list of ECharts options. A
- * bare option object becomes a one-element array; an array of options
- * passes through; anything else yields an empty list (an error message
- * is rendered upstream).
- */
-function normalizeCharts(output: unknown): Array<Record<string, unknown>> {
-    if (isEchartsOptionArray(output)) return [...output];
-    if (isEchartsOption(output)) return [output];
-    return [];
-}
-
-const EChartsDashboard: Component<{ output: unknown }> = (props) => {
-    const charts = () => normalizeCharts(props.output);
-    /**
-     * One sync controller per dashboard instance. Each card registers
-     * itself once its ECharts instance is ready; controller wires
-     * cross-card behavior after every register via a microtask rebuild.
-     */
-    const controller = createSyncController();
-    onCleanup(() => controller.dispose());
-
+/** Normalize the composable block output; fall back to the JSON `<pre>` if the
+ *  shape didn't survive normalization (defensive — should not happen). */
+const BlocksOrJson: Component<{ output: unknown }> = (props) => {
+    const blocks = () => toBlocks(props.output);
     return (
         <Show
-            when={charts().length > 0}
+            when={blocks().length > 0}
             fallback={
-                <div class="rounded-lg border bg-card px-2 py-1 text-xs text-destructive">
-                    ECharts output is missing or not a recognized option object.
-                </div>
+                <pre class="rounded-lg border bg-card px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words overflow-auto">
+                    {formatJson(props.output)}
+                </pre>
             }
         >
-            <div
-                class={
-                    charts().length > 1
-                        ? 'grid grid-cols-1 lg:grid-cols-2 gap-3'
-                        : 'grid grid-cols-1 gap-3'
-                }
-            >
-                <For each={charts()}>
-                    {(option, i) => (
-                        <EChartsCard option={option} index={i()} controller={controller} />
-                    )}
-                </For>
-            </div>
+            <ResultBlocks blocks={blocks()} />
         </Show>
     );
 };
 
-const EChartsCard: Component<{
-    option: Record<string, unknown>;
-    index: number;
-    controller: SyncController;
-}> = (props) => {
-    let container: HTMLDivElement | undefined;
-    const [error, setError] = createSignal<string | null>(null);
-
-    createEffect(() => {
-        const el = container;
-        const option = props.option;
-        if (!el) return;
-
-        let disposed = false;
-        let chart: EChartsInstance | null = null;
-        let resizeObserver: ResizeObserver | null = null;
-
-        (async () => {
-            const core = await loadEchartsCore({ renderer: 'canvas' });
-            if (disposed) return;
-            try {
-                chart = core.init(el) as EChartsInstance;
-                const patched = patchEchartsOption(option);
-                chart.setOption(patched);
-                setError(null);
-                props.controller.register(props.index, chart, patched);
-            } catch (e) {
-                setError(e instanceof Error ? e.message : String(e));
-                return;
-            }
-            resizeObserver = new ResizeObserver(() => {
-                try {
-                    chart?.resize();
-                } catch {
-                    // chart may be mid-dispose
-                }
-            });
-            resizeObserver.observe(el);
-        })();
-
-        onCleanup(() => {
-            disposed = true;
-            resizeObserver?.disconnect();
-            props.controller.unregister(props.index);
-            chart?.dispose();
-        });
-    });
-
+/** LLM-authored sandbox HTML (untrusted). `sanitizeHtml()` strips
+ *  scripts/handlers/javascript: URLs; we also refuse anything past a size cap
+ *  so a giant string can't stall the DOM. */
+const HtmlOutput: Component<{ output: unknown }> = (props) => {
+    const html = () => String(props.output ?? '');
     return (
-        <div class="rounded-lg border bg-card p-2 min-h-[360px] flex flex-col">
-            <Show when={error()}>
-                <div class="px-2 py-1 text-xs text-destructive">{error()}</div>
-            </Show>
-            <div ref={container} class="flex-1" style="width: 100%; min-height: 340px;" />
-        </div>
+        <Show
+            when={html().length <= MAX_HTML_CHARS}
+            fallback={
+                <div class="rounded-lg border bg-card px-4 py-3 text-xs text-muted-foreground">
+                    Output too large to render as HTML ({html().length.toLocaleString()} chars). Ask
+                    for a downloadable table or a summary.
+                </div>
+            }
+        >
+            <div
+                class="rounded-lg border bg-card px-4 py-3 prose prose-sm max-w-none"
+                // eslint-disable-next-line solid/no-innerhtml -- sanitized above
+                innerHTML={sanitizeHtml(html())}
+            />
+        </Show>
     );
 };
 
 function formatJson(x: unknown): string {
     try {
-        return JSON.stringify(x, null, 2);
+        const s = JSON.stringify(x, null, 2);
+        if (s.length > MAX_JSON_PRE_CHARS) {
+            return (
+                s.slice(0, MAX_JSON_PRE_CHARS) +
+                `\n… [truncated ${(s.length - MAX_JSON_PRE_CHARS).toLocaleString()} chars]`
+            );
+        }
+        return s;
     } catch {
         return String(x);
     }

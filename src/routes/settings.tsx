@@ -8,6 +8,7 @@ import {
     Match,
     For,
     type Component,
+    type JSX,
 } from 'solid-js';
 import { generateText } from 'ai';
 import { Button } from '@/registry/ui/button';
@@ -24,7 +25,7 @@ import {
 import { ModelSelector } from '@/components/model-selector';
 import { ConfirmDialog } from '@/components/data-sources/confirm-dialog';
 import { agentLabel } from '@/lib/agent/labels';
-import { getPiiAccessor } from '@/lib/pii/client';
+import { getTransformersAccessor, type ModelKey } from '@/lib/transformers/client';
 import { runtime, useSettings } from '@/lib/runtime/client';
 import { startChromeAiDownload, useChromeAiStatus } from '@/lib/runtime/chrome-ai-status';
 import { createModel } from '@/lib/agent/models';
@@ -75,7 +76,7 @@ const SettingsPage: Component = () => {
                     <ApiKeysSection />
                     <AgentsSection />
                     <DataSourcesSection />
-                    <PiiSection />
+                    <TransformersSection />
                     <PowerUserSection />
                     <DiagnosticsSection />
                     <MyDataSection />
@@ -89,7 +90,7 @@ const SettingsPage: Component = () => {
 const Section: Component<{
     title: string;
     description?: string;
-    children: any;
+    children: JSX.Element;
 }> = (props) => (
     <section class="flex flex-col gap-4 rounded-lg border bg-card/30 p-5">
         <div class="flex flex-col gap-1">
@@ -338,12 +339,11 @@ const ChromeAiPanel: Component = () => {
         }
     };
 
-    const toneClass = (tone: 'ok' | 'warn' | 'muted') =>
-        tone === 'ok'
-            ? 'text-emerald-600 dark:text-emerald-400'
-            : tone === 'warn'
-              ? 'text-amber-600 dark:text-amber-400'
-              : 'text-muted-foreground';
+    const toneClass = (tone: 'ok' | 'warn' | 'muted') => {
+        if (tone === 'ok') return 'text-emerald-600 dark:text-emerald-400';
+        if (tone === 'warn') return 'text-amber-600 dark:text-amber-400';
+        return 'text-muted-foreground';
+    };
 
     return (
         <div class="rounded-md border bg-card/40 px-3 py-3 flex flex-col gap-3 text-xs">
@@ -485,17 +485,22 @@ const TestResultInline: Component<{ state: TestState }> = (props) => (
     </Switch>
 );
 
-const PiiSection: Component = () => {
-    const accessor = getPiiAccessor();
-    const [manifest] = createResource(() => accessor.getManifest());
-    // Size probe lives in the worker (`modelSizeBytes`) so it HEADs the
-    // same versioned ASSET_BASE the model loads from — not a hardcoded
-    // path here that can drift and 404. Surface failures instead of
-    // swallowing them.
-    const [modelSize] = createResource(() => accessor.modelSizeBytes());
+// One model's download/cache control: model link + dtype chip, a Download
+// button showing the file size, and ✓Loaded / ✓Downloaded status. Keyed by
+// `modelKey`, so the same row drives PII and embeddings independently. All
+// probes route through the worker's keyed accessor methods (the size HEAD
+// and cache probe hit the exact ASSET_BASE the model loads from, so they
+// can't drift and 404).
+const ModelDownloadRow: Component<{
+    accessor: ReturnType<typeof getTransformersAccessor>;
+    modelKey: ModelKey;
+    label?: string;
+}> = (props) => {
+    const [info] = createResource(() => props.accessor.getModelInfo(props.modelKey));
+    const [modelSize] = createResource(() => props.accessor.modelSizeBytes(props.modelKey));
     createEffect(() => {
         if (modelSize.error) {
-            console.error('[settings] PII model size probe failed:', modelSize.error);
+            console.error(`[settings] ${props.modelKey} model size probe failed:`, modelSize.error);
         }
     });
     const [warm, setWarm] = createSignal(false);
@@ -509,14 +514,14 @@ const PiiSection: Component = () => {
 
     onMount(async () => {
         try {
-            if (await accessor.isWarm()) {
+            if (await props.accessor.isWarm(props.modelKey)) {
                 setWarm(true);
-                setBootMs(await accessor.bootElapsedMs());
+                setBootMs(await props.accessor.bootElapsedMs(props.modelKey));
                 return;
             }
-            setCached(await accessor.isCached());
+            setCached(await props.accessor.isCached(props.modelKey));
         } catch (e) {
-            console.error('[settings] PII accessor warm/cache probe failed:', e);
+            console.error(`[settings] ${props.modelKey} accessor warm/cache probe failed:`, e);
         }
     });
 
@@ -524,9 +529,9 @@ const PiiSection: Component = () => {
         setDownloading(true);
         setDownloadError(null);
         try {
-            await accessor.warmup();
+            await props.accessor.warmup(props.modelKey);
             setWarm(true);
-            setBootMs(await accessor.bootElapsedMs());
+            setBootMs(await props.accessor.bootElapsedMs(props.modelKey));
         } catch (e) {
             setDownloadError(e instanceof Error ? e.message : String(e));
         } finally {
@@ -545,9 +550,78 @@ const PiiSection: Component = () => {
     };
 
     return (
+        <div class="rounded-md border bg-background px-3 py-3 flex flex-col gap-2 text-xs">
+            <Show when={props.label}>
+                <div class="font-medium">{props.label}</div>
+            </Show>
+            <div class="flex items-center gap-2">
+                <span class="text-muted-foreground">Model:</span>
+                <Show
+                    when={info()}
+                    fallback={<span class="italic text-muted-foreground">loading manifest…</span>}
+                >
+                    {(m) => (
+                        <a
+                            href={m().source_url}
+                            target="_blank"
+                            rel="noopener"
+                            class="font-mono hover:underline"
+                        >
+                            {m().model_id}
+                        </a>
+                    )}
+                </Show>
+                <Show when={info()}>
+                    <span class="font-mono rounded border px-1 py-0.5 text-[10px] uppercase bg-muted/60">
+                        {info()!.dtype}
+                    </span>
+                </Show>
+            </div>
+            <div class="flex items-center gap-2">
+                <Switch
+                    fallback={
+                        <Button onClick={download} disabled={downloading()}>
+                            <Show
+                                when={downloading()}
+                                fallback={
+                                    <>
+                                        Download
+                                        <Show when={sizeLabel()}> {sizeLabel()}</Show>
+                                    </>
+                                }
+                            >
+                                <Spinner /> Downloading…
+                            </Show>
+                        </Button>
+                    }
+                >
+                    <Match when={warm()}>
+                        <span class="text-emerald-600 dark:text-emerald-400">✓ Loaded</span>
+                        <Show when={bootMs()}>
+                            <span class="text-muted-foreground">(boot {bootMs()} ms)</span>
+                        </Show>
+                    </Match>
+                    <Match when={cached()}>
+                        <span class="text-emerald-600 dark:text-emerald-400">✓ Downloaded</span>
+                        <span class="text-muted-foreground">
+                            Cached in this browser — loads instantly on next use.
+                        </span>
+                    </Match>
+                </Switch>
+            </div>
+            <Show when={downloadError()}>
+                <p class="text-destructive font-mono whitespace-pre-wrap">{downloadError()}</p>
+            </Show>
+        </div>
+    );
+};
+
+const TransformersSection: Component = () => {
+    const accessor = getTransformersAccessor();
+    return (
         <Section
-            title="PII detection"
-            description="Redact personal data from chat input before it leaves the browser. Runs entirely client-side via transformers.js + ONNX."
+            title="On-device models"
+            description="Models that run entirely in your browser via transformers.js + ONNX. Each is downloaded on demand and cached locally — nothing leaves the device."
         >
             <Checkbox
                 class="flex items-center gap-2"
@@ -559,75 +633,31 @@ const PiiSection: Component = () => {
                 <CheckboxLabel class="cursor-pointer">Use PII detection in chats</CheckboxLabel>
             </Checkbox>
 
+            {/* PII model download/cache control, shown only when PII is enabled
+                — its behavior is unchanged from the old PII detection panel. */}
             <Show when={useSettings().piiEnabled}>
-                <div class="rounded-md border bg-background px-3 py-3 flex flex-col gap-2 text-xs">
-                    <div class="flex items-center gap-2">
-                        <span class="text-muted-foreground">Model:</span>
-                        <Show
-                            when={manifest()}
-                            fallback={
-                                <span class="italic text-muted-foreground">loading manifest…</span>
-                            }
-                        >
-                            {(m) => (
-                                <a
-                                    href={m().source_url}
-                                    target="_blank"
-                                    rel="noopener"
-                                    class="font-mono hover:underline"
-                                >
-                                    {m().model_id}
-                                </a>
-                            )}
-                        </Show>
-                        <Show when={manifest()}>
-                            <span class="font-mono rounded border px-1 py-0.5 text-[10px] uppercase bg-muted/60">
-                                {manifest()!.dtype}
-                            </span>
-                        </Show>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <Switch
-                            fallback={
-                                <Button onClick={download} disabled={downloading()}>
-                                    <Show
-                                        when={downloading()}
-                                        fallback={
-                                            <>
-                                                Download
-                                                <Show when={sizeLabel()}> {sizeLabel()}</Show>
-                                            </>
-                                        }
-                                    >
-                                        <Spinner /> Downloading…
-                                    </Show>
-                                </Button>
-                            }
-                        >
-                            <Match when={warm()}>
-                                <span class="text-emerald-600 dark:text-emerald-400">✓ Loaded</span>
-                                <Show when={bootMs()}>
-                                    <span class="text-muted-foreground">(boot {bootMs()} ms)</span>
-                                </Show>
-                            </Match>
-                            <Match when={cached()}>
-                                <span class="text-emerald-600 dark:text-emerald-400">
-                                    ✓ Downloaded
-                                </span>
-                                <span class="text-muted-foreground">
-                                    Cached in this browser — loads instantly when PII detection
-                                    runs.
-                                </span>
-                            </Match>
-                        </Switch>
-                    </div>
-                    <Show when={downloadError()}>
-                        <p class="text-destructive font-mono whitespace-pre-wrap">
-                            {downloadError()}
-                        </p>
-                    </Show>
-                </div>
+                <ModelDownloadRow
+                    accessor={accessor}
+                    modelKey="pii"
+                    label="PII detection (token-classification NER)"
+                />
             </Show>
+
+            {/* Semantic search: embeds high-cardinality free-text columns at
+                import so the planner can match rows by meaning via
+                vector_search(). The bge-embed model loads from static assets
+                on first use — no separate download step needed. */}
+            <Checkbox
+                class="flex items-center gap-2"
+                checked={useSettings().semanticSearchEnabled}
+                onChange={(v) => runtime.patchSettings({ semanticSearchEnabled: v })}
+            >
+                <CheckboxInput class="sr-only" />
+                <CheckboxControl />
+                <CheckboxLabel class="cursor-pointer">
+                    Enable semantic search (embed text columns on import)
+                </CheckboxLabel>
+            </Checkbox>
         </Section>
     );
 };
@@ -647,6 +677,11 @@ const PowerUserSection: Component = () => {
             key: 'showPiiTester',
             label: 'PII detector testing',
             description: 'Standalone PII playground at /pii.',
+        },
+        {
+            key: 'showEmbeddingsTester',
+            label: 'Embeddings testing',
+            description: 'Embedding + cosine-similarity playground at /embeddings.',
         },
         {
             key: 'showQjsTester',

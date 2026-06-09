@@ -20,7 +20,36 @@ export type DataSource = {
     sampleData?: never;
 };
 
-export type ActionOutputFormat = 'markdown' | 'html' | 'json' | 'echarts';
+export type ActionOutputFormat = 'markdown' | 'html' | 'json' | 'echarts' | 'blocks';
+
+/**
+ * Wire-tag discriminants the sandbox emits for the composable block model.
+ * The Coder builds blocks via the `md()` / `chart()` / `table()` globals and
+ * composes them with `present(...)`, which sets `__output` to a
+ * `{ __kind: 'blocks', blocks: [...] }` wrapper. These are plain JSON objects
+ * so they persist to IDB unchanged.
+ */
+export const BLOCK_KIND = 'block' as const;
+export const BLOCKS_KIND = 'blocks' as const;
+
+/**
+ * Renderer-side normalized block — what `toBlocks()` produces and
+ * `ResultBlocks` consumes. The wire tags carry a `type` field; normalization
+ * maps it to `kind` and derives missing table columns. Every `table` block
+ * renders in the interactive AG-Grid (small results auto-size to content,
+ * large ones get a bounded, virtualized box) — there is no inline/markdown
+ * table path.
+ */
+export type ResultBlock =
+    | { kind: 'markdown'; text: string }
+    | { kind: 'chart'; option: Record<string, unknown> }
+    | {
+          kind: 'table';
+          columns: string[];
+          rows: Array<Record<string, unknown>>;
+          title?: string;
+          caption?: string;
+      };
 
 /**
  * Coder finalization mode for an Action / ActionVersion.

@@ -27,6 +27,15 @@ by non-analysts.
 The dataset is layered with realistic biases — see "Hidden patterns to
 discover" below — so exploratory queries and BI dashboards have
 something meaningful to find rather than uniform noise.
+
+Human-entered text fields (\`customers.first_name\` / \`last_name\` /
+\`city\` and \`claims.description\`) carry realistic data-entry noise —
+dropped letters, doubled letters, transpositions and fat-finger
+substitutions — so they read as messy free text rather than a clean
+pick-list. Identifiers (\`sku\`, \`email\`) and join keys (\`country\`)
+are left pristine. Expect \`COUNT(DISTINCT first_name)\` to be high and
+exact grouping on names to fragment — fuzzy / semantic matching is the
+intended path.
 `.trim();
 
 const HIDDEN_PATTERNS: ReadonlyArray<DemoHiddenPattern> = [

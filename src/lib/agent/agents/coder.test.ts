@@ -121,7 +121,7 @@ describe('coder run_in_sandbox executor', () => {
         if (!res.ok) {
             expect(res.error).toMatch(/phase: parse/);
             expect(res.error).toMatch(/SyntaxError/);
-            expect(res.error).toMatch(/   1 \| let s = 'unterminated/);
+            expect(res.error).toMatch(/ {3}1 \| let s = 'unterminated/);
         }
     });
 
@@ -223,14 +223,19 @@ describe('coder unified prompt + validate_echarts', () => {
         echartsValidateMock.validate.mockReset();
     });
 
-    it('prompt covers both markdown and ECharts paths in a single unified prompt', () => {
+    it('prompt covers the block model (md/chart/table + present) in a single unified prompt', () => {
         const def = coderAgent();
-        // Both render paths are mentioned.
+        // All render paths are mentioned.
         expect(def.systemPrompt).toMatch(/markdown/i);
         expect(def.systemPrompt).toMatch(/ECharts/);
         expect(def.systemPrompt).toMatch(/validate_echarts/);
-        // The duck-typing rule is spelled out.
-        expect(def.systemPrompt).toMatch(/INFERRED from the shape/);
+        // The block builders + collector are documented.
+        expect(def.systemPrompt).toMatch(/present\(/);
+        expect(def.systemPrompt).toMatch(/\btable\(/);
+        expect(def.systemPrompt).toMatch(/\bchart\(/);
+        expect(def.systemPrompt).toMatch(/\bmd\(/);
+        // All tables go to the grid — never hand-built in markdown.
+        expect(def.systemPrompt).toMatch(/never hand-build a markdown/i);
         // No mention of the old output_format / notes fields.
         expect(def.systemPrompt).not.toMatch(/output_format/);
         expect(def.systemPrompt).not.toMatch(/`notes`/);

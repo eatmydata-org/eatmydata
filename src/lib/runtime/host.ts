@@ -44,7 +44,6 @@ import type { PersistedPendingReview } from '@/lib/actions/types';
 import type { Message } from '@/lib/types';
 import { addLocalEventTap, publish } from './state/broadcast';
 import type { RuntimeEvent } from './api';
-import { getSqliteDb } from '@/lib/sqlite/client';
 import { computeStepCost, extractUsageCounts } from '@/lib/agent/cost';
 import { primeModelPrices } from './prime-model-prices';
 
@@ -116,10 +115,7 @@ export async function submitMessage(
  * if this tab is torn down (browser guarantee), so a closed-mid-run tab
  * frees the action for the next tab.
  */
-async function acquireActionLock(
-    actionId: string,
-    _signal: AbortSignal,
-): Promise<{ release: () => void } | null> {
+async function acquireActionLock(actionId: string): Promise<{ release: () => void } | null> {
     const lockName = `analyst-action:${actionId}`;
     let release!: () => void;
     let acquired = false;
@@ -156,7 +152,7 @@ async function runAgentBackground(
     // Take an exclusive Web Lock so a peer tab can't start a second
     // concurrent run for the same action. If we can't get it, the user's
     // message has already landed in the session; flag the error and bail.
-    const acquired = await acquireActionLock(actionId, ac.signal);
+    const acquired = await acquireActionLock(actionId);
     if (!acquired) {
         sessions.setError(actionId, 'This action is already running in another tab.');
         sessions.setInflightId(actionId, null);
@@ -679,9 +675,7 @@ function registerAutoPersist(): void {
 }
 
 /**
- * One-time tab boot: reset the PII sanitizer dictionaries (per-session
- * artifact), then seed the demo db idempotently so the first
- * `list_tables` call sees populated data.
+ * One-time tab boot.
  */
 let bootStarted = false;
 export function boot(): void {
@@ -689,14 +683,6 @@ export function boot(): void {
     bootStarted = true;
     registerAutoPersist();
     resetSanitizer();
-    void (async () => {
-        try {
-            const db = await getSqliteDb();
-            await db.seed();
-        } catch (e) {
-            console.warn('[runtime/host] initial seed failed', e);
-        }
-    })();
     // Refresh model pricing in the background (OpenRouter cached 1 day; Google
     // from its committed map). Pricing is session-only, so this runs each boot.
     void (async () => {

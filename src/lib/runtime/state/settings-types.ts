@@ -112,9 +112,19 @@ export interface Settings {
      */
     agentModels: Partial<Record<AgentModelKey, string>>;
     piiEnabled: boolean;
+    /**
+     * Opt-in: when on, importing data embeds its high-cardinality free-text
+     * columns (on-device, via the BGE model) so the planner can match rows by
+     * meaning with `vector_search(...)`. Off by default — enabling it incurs a
+     * one-time model download (cached via the Cache API) and per-import CPU.
+     * The embeddings + search stay on-device; the privacy guarantee is
+     * unchanged (matched rows reach the LLM only through the PII sanitizer).
+     */
+    semanticSearchEnabled: boolean;
     powerUser: boolean;
     showSqlConsole: boolean;
     showPiiTester: boolean;
+    showEmbeddingsTester: boolean;
     showQjsTester: boolean;
     /** Default persistence pre-selected in the import dialog. */
     defaultDataSourcePersistence: DataSourcePersistence;
@@ -223,9 +233,11 @@ export function defaultSettings(): Settings {
         defaultModelId: resolveAgentModel(providers, {}, 'orchestrator'),
         agentModels: {},
         piiEnabled: true,
+        semanticSearchEnabled: false,
         powerUser: import.meta.env.DEV,
         showSqlConsole: false,
         showPiiTester: false,
+        showEmbeddingsTester: false,
         showQjsTester: false,
         defaultDataSourcePersistence: 'persistent',
     };
@@ -313,6 +325,17 @@ interface LegacySettings {
  * chrome-ai entries are dropped (on-device, keyless); empty harvested keys are
  * skipped (an empty seed is "no key", not a stored override).
  */
+/** True for a legacy provider whose `apiKey` should be harvested into the map. */
+function isHarvestableLegacyProvider(pr: ProviderInstance): boolean {
+    return (
+        !!pr &&
+        typeof pr.id === 'string' &&
+        pr.kind !== 'chrome-ai' &&
+        typeof pr.apiKey === 'string' &&
+        !!pr.apiKey.trim()
+    );
+}
+
 function resolveApiKeys(p: Partial<Settings> & LegacySettings): Record<string, string> {
     const out: Record<string, string> = {};
     if (p.apiKeys && typeof p.apiKeys === 'object') {
@@ -321,15 +344,7 @@ function resolveApiKeys(p: Partial<Settings> & LegacySettings): Record<string, s
         }
     } else if (Array.isArray(p.providers)) {
         for (const pr of p.providers as ProviderInstance[]) {
-            if (
-                pr &&
-                typeof pr.id === 'string' &&
-                pr.kind !== 'chrome-ai' &&
-                typeof pr.apiKey === 'string' &&
-                pr.apiKey.trim()
-            ) {
-                out[pr.id] = pr.apiKey;
-            }
+            if (isHarvestableLegacyProvider(pr)) out[pr.id] = pr.apiKey!;
         }
     }
     if (typeof p.apiKey === 'string' && p.apiKey.trim()) out[OPENROUTER_PROVIDER_ID] = p.apiKey;
@@ -375,14 +390,22 @@ function stripLegacy(p: Partial<Settings> & LegacySettings): Partial<Settings> {
     // incoming catalog ride through the spread. `useOneModelForAll` was removed.
     // `provider`/`apiKey`/`chromeAiEnabled`/`models` are the pre-multi-provider
     // legacy shape. (`apiKeys` is a real field — kept and set explicitly below.)
-    const { provider, apiKey, chromeAiEnabled, models, useOneModelForAll, providers, ...rest } =
-        p as Record<string, unknown>;
-    void provider;
-    void apiKey;
-    void chromeAiEnabled;
-    void models;
-    void useOneModelForAll;
-    void providers;
+    // These names are destructured purely to drop them from `rest`.
+    const {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        provider,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        apiKey,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        chromeAiEnabled,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        models,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        useOneModelForAll,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        providers,
+        ...rest
+    } = p as Record<string, unknown>;
     return rest as Partial<Settings>;
 }
 

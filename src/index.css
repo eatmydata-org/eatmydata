@@ -267,12 +267,16 @@
     margin: 0 0 0.85em 0;
 }
 
-.sd-bubble :is(p, ul, ol, pre, blockquote, table, hr):last-child {
-    margin-bottom: 0;
+/* A bubble sheds margin at its own top/bottom edges, so inter-block spacing
+   (prose ↔ chart ↔ table) is owned solely by the ResultBlocks flex `gap`.
+   Element-agnostic: a trailing <h3> — or anything solid-markdown emits at a
+   boundary — can't leak a margin that doubles the gap. */
+.sd-bubble :first-child {
+    margin-top: 0;
 }
 
-.sd-bubble :is(p, ul, ol, pre, blockquote, table, hr):first-child {
-    margin-top: 0;
+.sd-bubble :last-child {
+    margin-bottom: 0;
 }
 
 .sd-bubble ul,
@@ -315,10 +319,6 @@
 }
 .sd-bubble h3 {
     font-size: 1.15em;
-}
-
-.sd-bubble :is(h1, h2, h3, h4, h5, h6):first-child {
-    margin-top: 0;
 }
 
 .sd-bubble code {

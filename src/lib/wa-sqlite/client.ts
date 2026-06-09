@@ -130,6 +130,14 @@ export async function importDemoIntoOpfs(
 }
 
 /**
+ * Embed `texts` via the bge-embed C engine running in the DedicatedWorker.
+ * Non-blocking from the main thread; warms the engine on first call.
+ */
+export async function sqliteEmbed(texts: string[]): Promise<number[][]> {
+    return (await getSqliteAccessor()).embed(texts);
+}
+
+/**
  * Terminate the DedicatedWorker and drop all caches. Worker termination
  * releases its OPFS SyncAccessHandle and Web Locks immediately. Everything is
  * lazy, so the next `getSqliteDb`/`getSqliteAccessor` re-spawns a fresh worker.

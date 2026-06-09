@@ -1,172 +1,175 @@
 # eatmydata.ai
 
-**Chat with your data locally.**
+Answer questions from your data without uploading it anywhere.
 
-eatmydata.ai is an AI data analyst for business users
-and simple data analytics, built with strong data privacy guarantees in mind.
+No cloud, no subscriptions, no privacy concerns.
 
-**No backend** - no accounts, no shared db, no uploads.
+Host it yourself - free, open-source, MIT licensed, no backend.
 
-**Realtime PII removal** - only obfuscated data sent to remote LLM, and never expose your real data to the LLM
-agents writing queries or code _by design_.
+We support OpenRouter (from app), and any LLM provider from Vercel AI SDK list (configured in app JSON);
 
-**Fully open-source** - app code is fully available
-for security reviews and for public use.
+## Workflow
 
-**The only cloud service it uses is an LLM provider** - which will change in the near future. We work with
-OpenRouter, Google AI Studio, and OpenAI-compatible endpoints.
+1. Connect OpenRouter account;
+2. Upload your data from spreadsheets or csv;
+3. Ask question and get answer FAST;
+4. See it on charts or in spreadsheet;
+5. Goto 3
 
-## Why this exists
+Slice, dice, filter, relate, correlate, extrapolate, we can do it all.
 
-"Chat with your data" tools are everywhere, and almost all of them work the same
-way: you hand your database to someone else's cloud, their backend runs the
-queries, and their model reads your rows. For a personal CSV that's mildly
-uncomfortable. For a company's customer table, sales ledger, or anything with
-names, emails, and IDs in it, it's a non-starter - the data is exactly the thing
-you can't email to a third party.
+Just explain your needs in plain English, and work on result step by step together pairing with AI.
 
-eatmydata.ai is built on the opposite assumption: **the data never moves.** The
-database engine, the file parsing, the analysis, and the storage all run inside
-your browser. The only thing that ever crosses the network is the conversation
-with the language model - and before that conversation happens, anything that
-looks like personal or sensitive information is detected and stripped out
-locally, so the model reasons about your _schema and shape_, never your actual
-records.
+## Why we built it
 
-That's the whole point: get the convenience of an AI analyst without giving up
-custody of the data.
+For fast throwaway data analysis or queries from questions in English.
 
----
+We firmly believe that **time from idea to answer matters** and often we need a tool to explore data within next 5 minutes.
 
-## How the privacy model works
+We hate every minute spent debugging SQL, charts, BI and Excel formulas as well as Jupyter notebooks.
 
-Three things keep your data local, in order of how much you have to trust us
-(spoiler: very little - it's all open source and inspectable):
+## Why we _really_ built it
 
-1. **The database runs in your browser.** SQLite is compiled to WebAssembly
-   ([wa-sqlite](https://github.com/rhashimoto/wa-sqlite)) and stored in the
-   browser's private OPFS filesystem. Importing an Excel/CSV file or opening a
-   demo database writes bytes to _your_ disk, not to a server. Queries execute
-   on your machine.
+It's a testbed for various data exploration patterns and tools. We use experience learned
+here in other projects. We also use this repo to try bespoke AI kernels optimized for WASM SIMD,
+or to implement papers to code, or to support missed functionality in open-source software.
+At the end of the day, we use this software ourselves for personal throwaway data analysis.
 
-2. **The model never sees raw data.** When the assistant needs to look at sample
-   rows to understand your data, those samples pass through a local sanitizer
-   first. A small on-device NER model (a TinyBERT, running via
-   [transformers.js](https://github.com/huggingface/transformers.js)) flags
-   names, emails, and IDs, and the sanitizer masks them before anything is sent
-   to the LLM. Author-written SQL literals are passed through unmasked - those
-   are values _you_ put in the query, so hiding them would protect nothing and
-   just break the generated code.
+Some of the libraries used in this project are specific forks or missing links
+in upstream. For example, `xlsx` is a great library but lacks styles support (implemented here),
+and sqlite vector extension implementing TurboQuant (`sqliteai/sqlite-vector`) is prohibitely licensed, so we had to implement our own MIT-licensed from scratch.
 
-3. **The AI provider is yours.** Today the language model runs through your own
-   API key (OpenRouter, Google AI Studio, or any OpenAI-compatible endpoint).
-   Your key lives in your browser and is sent only to the provider you chose.
-   On-device models (via Chrome's built-in AI, and more to come) are wired in so
-   that eventually even the reasoning can happen fully offline.
+# What do we have here
 
-4. **No cookies, no accounts, no backend to call.** 100% self-hostable,
-   and provided for free from EU and US regions in Google Cloud.
+## Text-to-SQL-to-Presentation
 
----
+Basically we generate dashboards or tables by writing one or more SQL queries for your data, and putting it on dashboards.
 
-## The core tool: Actions
+AI decides which queries to write, and which dashboards to build. We provide it with dev tools, secure access to your data without exposing it to prompts, with semantic indexes and validation at every step for self-correction.
 
-Everything the assistant produces is an **Action** - a reusable bundle of:
+This is not a benchmarked text-to-SQL, however we have a couple of cards in the sleeve
+to make it accurate - semantic indexing, schema exploration agent and PII filtering.
 
-- one or more **SQL data sources** (the queries that pull the data), plus
-- a **code step** that turns those query results into an answer: markdown prose,
-  a data table, or an [ECharts](https://echarts.apache.org/) dashboard.
+## Architecture
 
-Chat exists only to help you create and refine Actions. When you ask a question,
-the assistant proposes a plan, you approve it, and it explores your schema with
-bounded, read-only queries before writing any code. Because an Action is a saved
-artifact, you can re-run it, tweak it ("now break that down by region"), and
-come back to it later - it's not a one-off chat message that scrolls away.
+Everything is bundled in a backend-free web app:
 
-Under the hood the assistant is a small team of cooperating agents: an
-**Orchestrator** that talks to you, a **Planner** that explores the schema and
-drafts the SQL, and a **Coder** that writes the rendering step. The code step
-runs in a sandboxed QuickJS WebAssembly interpreter, so generated code can't
-touch the network or the rest of the page.
+- An `{orchestrator - sql_planner - coder}` loop that produces a Saved Action (`N` queries + code + `M` outputs). Pairing it with `gemini- flash-2.5-lite` is a lot of fun for close-to-zero cost.
 
----
+- **Sync OPFS** local **sqlite** database in **DedicatedWorker** (`OPFSCoopSyncVFS` + **Web Locks**)
 
-## What's in the box
+- Bundled **NER PII engine** + **semantic indexing**.
 
-- **Bring your own data** - drag in an `.xlsx`, `.xls`, or `.csv` and it's
-  parsed and stored locally.
-- **Demo databases** - ready-made sample datasets (a synthetic retail store,
-  Northwind, AdventureWorks, Contoso) to try things out without your own data.
-- **Multi-provider AI** - configure one or more LLM providers and keys; each
-  agent can use a different model.
-- **Real dashboards** - interactive ECharts visualizations, not just tables.
-- **Excel export** - styled `.xlsx` output (bold headers, number formats) via a
-  patched SheetJS.
-- **Multi-tab safe** - open the app in several tabs at once; database access is
-  coordinated at the storage layer so tabs don't corrupt each other's writes.
+- MIT-licensed **TurboQuant extension for sqlite**, compatible with sync calling pattern, and bundled with **inference engine**:
 
----
-
-## Built with
-
-| Part            | Tool                                                                   |
-| --------------- | ---------------------------------------------------------------------- |
-| UI              | [SolidJS](https://solidjs.com) + [Vite](https://vite.dev) + TypeScript |
-| Components      | shadcn-solid (Kobalte + Tailwind v4)                                   |
-| Database        | wa-sqlite over OPFS, one worker per tab                                |
-| Code sandbox    | QuickJS compiled to WASM (via wasi-sdk)                                |
-| Local PII model | TinyBERT NER via transformers.js / onnxruntime-web                     |
-| LLM plumbing    | Vercel AI SDK + per-provider adapters                                  |
-| Charts          | ECharts · **Tables** ag-grid · **Export/Import** SheetJS               |
-| Storage         | OPFS (databases) + IndexedDB (settings, actions, results)              |
-
-The browser-side WASM artifacts (the SQLite engine, the QuickJS sandbox, the PII
-model) are built from vendored submodules with a shared wasi-sdk toolchain.
-
----
-
-## Running locally
-
-You'll need [pnpm](https://pnpm.io), a recent Node (22+), and CMake (for the
-WASM builds). We plan to publish built artefacts in the future.
-
-```bash
-# 1. Clone with submodules (wa-sqlite, quickjs, sheetjs, demo datasets, …)
-git submodule update --init --recursive    # or: make submodules-init
-
-# 2. Install dependencies
-pnpm install
-
-# 3. Build the browser-side WASM artifacts (SQLite engine + sandbox)
-make wa-sqlite      # SQLite engine, ~8s
-make wasm           # QuickJS sandbox
-
-# 4. (Optional) build the demo databases into public/demo/
-make demo-data
-
-# 5. Run the dev server
-pnpm dev            # http://localhost:5173
+```
+-- select top 20 products semantically related to shoes
+SELECT t.* FROM vector_search('product', 'name', 'shoes', 20) AS t;
 ```
 
-To use the AI features, open **Settings** and paste in a provider API key - the
-landing page walks you through it (OpenRouter has a free model to start with).
-Your key is stored locally in the browser.
+- MIT-licensed lightweight and WASM-optimized **inference engine for NER and embeddings generation**:
+    - LLM-authored SIMD with correctness and performance checked against ONNX Runtime.
+    - Up to 1.7x inference speedup compared to ONNX;
+    - ~38x smaller WASM binary (~0.34 MB vs ONNX Runtime's ~13 MB).
 
-### Other commands
+- **QuickJS for strict AI code sandboxing**
+    - WASM sandbox without network/file/host access;
+    - AI-generated JS code that does last-step data processing and assembling of
+      the dashboard declaration from multiple SQL sources;
 
-```bash
-pnpm build          # production build → dist/ (a static site)
-pnpm test           # unit tests (vitest)
-pnpm lint           # SAST-oriented ESLint
-pnpm scan:secrets   # static secret scanner (also runs pre-commit)
-```
+- **Apache ECharts** for charts with all bells and whistles;
 
-There's also an in-browser test bench at `/tests` for the things vitest can't
-reach (workers, OPFS, multi-tab), plus standalone debug routes (`/wa-sqlite`,
-`/pii`, `/sql`, `/qjs`, `/xlsx`).
+- **AG Grid** for responsive virtual grids;
 
----
+- **XLSX Community with Styles patch** for excel import and export;
 
-## License
+- **SolidJS** for superglue that exposes all this goodness to a user through the UI.
 
-MIT - see [LICENSE](LICENSE). Open source, self-hostable, private and free to use!
+## Semantic indexing and NER
+
+We use small models that fit in-browser processing, in `GGUF` format. The converter from HuggingFace models is included. Models are bundled with the app.
+
+| Purpose    | Model                                                                                                                |
+| ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| Embeddings | [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) quantized + GGUF                             |
+| NER        | [gravitee-io/bert-small-pii-detection](https://huggingface.co/gravitee-io/bert-small-pii-detection) quantized + GGUF |
+
+We use an AI-coded inference engine optimized for these two models, with WASM SIMD kernels. The accuracy was validated against ONNX. We outperform the ONNX WASM build by 1.5x - 1.7x, with a ~38x smaller engine binary (~0.34 MB vs ONNX Runtime's ~13 MB).
+
+We mainly needed single-threaded inference for
+sqlite integration, NER addition was done just to reduce
+init time, bundle size and for proof-of-concept.
+
+## Data privacy
+
+We employ a number of techniques to ensure that data stored in sqlite is never exposed
+to remote LLM, and user input that eventually sent to LLM is filtered of any PII.
+
+We won't claim we hide all your data, but we put a reasonably high effort to do so:
+
+- inputs are NER-filtered, blocked, and gated for user confirmation in all input forms;
+- high-cardinality data is checked and redacted for PII automatically;
+- straight PII is redacted regardless of statistical properties;
+- for numerical and shape data, counts, distributions and values are completely hidden or rescaled in LLM tool call answers;
+
+## Demo data
+
+We provide some synthetic data to showcase analysis results,
+that we also use for internal testing.
+
+Familiar to any Microsoft DBA or BI user:
+
+- Microsoft Contoso, sqlite port;
+- Microsoft AdventureWorks, sqlite port;
+- Microsoft NorthWind Traders, sqlite port;
+- Our own "ShoeRetailer" database in 3 sizes (xs, m, xl).
+
+Databases can be loaded to your storage from "Data Sources" and come with pre-built semantic
+indexes (e.g. "show me all customer claims about sole defects" or "analyze revenue trends in our pet goods categories").
+
+_TODO: start loading analysis examples bundled with demo db_
+
+# Building
+
+Everything is bundled and controlled by CMakeLists.txt + `make all`.
+
+All WASM binaries are compiled by wasm-sdk, mainly because its so hard to make sense
+of Emscripten support code around core WASI.
+
+# Tests
+
+There are:
+
+- vitest tests;
+- WASM extension tests;
+- inference correctness tests vs ONNX Runtime;
+- in-browser tests under `/tests` route;
+- Chrome CDP startup Makefiel target (for AI-assisted issue reproduction and debugging)
+- per-commit linting + sonarjs SAST;
+
+# Misc
+
+## Deployment
+
+We deploy on static Google Cloud bucket in 2 regions (us/eu) + CDN. See `deploy.sh`.
+
+It's just a static web app, can be deployed absolutely everywhere, including any
+airgapped or corporate environment. We do not use trackers, Sentry or anything external that calls home.
+
+## Plans
+
+We plan to improve further:
+
+- stronger data privacy guarantees;
+- support for more complex dashboards layouts, drill-downs and drill-through's;
+- re-run and send pre-cooked reports on schedule;
+- load data from external sources, with clients for remote API's generated by AI (literally not included with app but AI-coded to your needs locally);
+- domain-specific databases and analysis examples;
+- Local RAG for reference queries and reports for business verticals;
+- Multi-user collaborative work via simple S3 backend storage;
+- Integrating some of the anaysis flows with our commercial product (vertical SaaS);
+- and more!
+
+## Reach out
+
+support@eatmydata.ai <!-- secret-scan-allow -- project's own published support contact -->

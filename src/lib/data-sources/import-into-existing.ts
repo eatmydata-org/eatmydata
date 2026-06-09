@@ -13,7 +13,7 @@
  * "Import table" button where we want a safety net.
  */
 import type { DataSource } from './types';
-import { getSourceDb, putTableMeta, assertSafeIdentifier } from './db';
+import { getSourceDb, putTableMeta, clearColumnCardinality, assertSafeIdentifier } from './db';
 import { coerceCell, type ColumnSniff } from './type-sniff';
 import { stageFile, type ImportJob } from './import';
 
@@ -36,10 +36,7 @@ export type ImportIntoResult =
  * returns rows even when the table has zero rows (so the comparison is
  * structural, not row-dependent).
  */
-async function getCurrentColumns(
-    source: DataSource,
-    tableName: string,
-): Promise<ColumnInfo[]> {
+async function getCurrentColumns(source: DataSource, tableName: string): Promise<ColumnInfo[]> {
     const db = await getSourceDb(source);
     const safe = tableName.replace(/"/g, '""');
     const res = await db.execRaw(`PRAGMA table_info("${safe}")`, 10_000);
@@ -49,10 +46,7 @@ async function getCurrentColumns(
     }));
 }
 
-function diffColumns(
-    current: ColumnInfo[],
-    incoming: ColumnInfo[],
-): string[] {
+function diffColumns(current: ColumnInfo[], incoming: ColumnInfo[]): string[] {
     const reasons: string[] = [];
     if (current.length !== incoming.length) {
         reasons.push(
@@ -72,9 +66,7 @@ function diffColumns(
             continue;
         }
         if (a && b && a.name !== b.name) {
-            reasons.push(
-                `Column #${i + 1} name differs: "${a.name}" vs "${b.name}".`,
-            );
+            reasons.push(`Column #${i + 1} name differs: "${a.name}" vs "${b.name}".`);
         }
         if (a && b && a.type !== b.type) {
             reasons.push(
@@ -119,9 +111,7 @@ async function bulkInsert(
             }
             parts.push(`(${bindings.join(', ')})`);
         }
-        await db.execRaw(
-            `INSERT INTO "${tableName}" (${quotedCols}) VALUES ${parts.join(', ')}`,
-        );
+        await db.execRaw(`INSERT INTO "${tableName}" (${quotedCols}) VALUES ${parts.join(', ')}`);
         inserted += chunk.length;
     }
     return inserted;
@@ -142,19 +132,14 @@ async function replaceDataOnly(
     await db.execRaw('BEGIN');
     try {
         await db.execRaw(`DELETE FROM "${tableName}"`);
-        const inserted = await bulkInsert(
-            source,
-            tableName,
-            job.columnNames,
-            job.sniffs,
-            job.rows,
-        );
+        const inserted = await bulkInsert(source, tableName, job.columnNames, job.sniffs, job.rows);
         await db.execRaw('COMMIT');
         await putTableMeta(source, {
             tableName,
             originalFileName: job.originLabel,
             importedAt: Date.now(),
         });
+        await invalidateCardinality(db, tableName);
         return inserted;
     } catch (e) {
         try {
@@ -163,6 +148,23 @@ async function replaceDataOnly(
             // ignore
         }
         throw e;
+    }
+}
+
+/**
+ * Drop cached cardinality verdicts for the table so the next describe_table
+ * re-analyzes the new rows (categorical columns are detected lazily at
+ * describe time — see low-cardinality.ts). Best-effort: a failure here must
+ * not fail the import, which is already committed.
+ */
+async function invalidateCardinality(
+    db: Awaited<ReturnType<typeof getSourceDb>>,
+    tableName: string,
+): Promise<void> {
+    try {
+        await clearColumnCardinality(db, tableName);
+    } catch (e) {
+        console.warn('[data-sources/import-into-existing] clearing cardinality cache failed:', e);
     }
 }
 
@@ -181,19 +183,14 @@ async function replaceStructureAndData(
     try {
         await db.execRaw(`DROP TABLE IF EXISTS "${tableName}"`);
         await db.execRaw(`CREATE TABLE "${tableName}" (${colDdl})`);
-        const inserted = await bulkInsert(
-            source,
-            tableName,
-            job.columnNames,
-            job.sniffs,
-            job.rows,
-        );
+        const inserted = await bulkInsert(source, tableName, job.columnNames, job.sniffs, job.rows);
         await db.execRaw('COMMIT');
         await putTableMeta(source, {
             tableName,
             originalFileName: job.originLabel,
             importedAt: Date.now(),
         });
+        await invalidateCardinality(db, tableName);
         return inserted;
     } catch (e) {
         try {
@@ -216,9 +213,7 @@ export async function importIntoExisting(
     source: DataSource,
     targetTable: string,
     file: File,
-    onStructureMismatch: (
-        mismatch: StructureMismatch,
-    ) => Promise<'replace-structure' | 'cancel'>,
+    onStructureMismatch: (mismatch: StructureMismatch) => Promise<'replace-structure' | 'cancel'>,
 ): Promise<ImportIntoResult> {
     const jobs = await stageFile(file, [], new Set());
     const job = jobs[0];

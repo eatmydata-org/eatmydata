@@ -20,9 +20,12 @@ vi.mock('@/lib/data-sources/resolver', () => ({
 }));
 
 import {
+    deriveTableColumns,
     executeAction,
     inferOutputFormat,
+    normalizeTableColumns,
     parseMarkdownTemplate,
+    toBlocks,
     wrapMarkdownTemplate,
 } from './executor';
 import type { Action } from './types';
@@ -78,14 +81,155 @@ describe('inferOutputFormat', () => {
         expect(inferOutputFormat({ totalRows: 42 })).toBe('json');
     });
 
-    it('returns json for arrays of plain objects without ECharts keys', () => {
-        expect(inferOutputFormat([{ a: 1 }, { b: 2 }])).toBe('json');
+    it('returns blocks for a bare array of flat scalar records (convenience table)', () => {
+        // Was 'json' before the block model — a bare array of rows now renders
+        // as a single table block (AG-Grid).
+        expect(inferOutputFormat([{ a: 1 }, { b: 2 }])).toBe('blocks');
+    });
+
+    it('returns json for arrays of records with nested object/array values', () => {
+        expect(inferOutputFormat([{ a: { nested: true } }])).toBe('json');
+        expect(inferOutputFormat([{ a: [1, 2, 3] }])).toBe('json');
+    });
+
+    it('returns blocks for the present() wrapper', () => {
+        const wrapper = {
+            __kind: 'blocks',
+            blocks: [
+                { __kind: 'block', type: 'markdown', text: '## Hi' },
+                { __kind: 'block', type: 'table', rows: [{ a: 1 }] },
+            ],
+        };
+        expect(inferOutputFormat(wrapper)).toBe('blocks');
+    });
+
+    it('returns blocks for a lone table()/chart() block and a bare array of blocks', () => {
+        expect(inferOutputFormat({ __kind: 'block', type: 'table', rows: [{ a: 1 }] })).toBe(
+            'blocks',
+        );
+        expect(
+            inferOutputFormat([
+                { __kind: 'block', type: 'markdown', text: 'x' },
+                { __kind: 'block', type: 'chart', option: { series: [] } },
+            ]),
+        ).toBe('blocks');
+    });
+
+    it('keeps a bare ECharts option array as echarts (ordering: charts win over flat-array)', () => {
+        const charts = [{ xAxis: { type: 'category', data: ['a'] }, yAxis: {}, series: [] }];
+        expect(inferOutputFormat(charts)).toBe('echarts');
     });
 
     it('returns json for primitives other than strings', () => {
         expect(inferOutputFormat(42)).toBe('json');
         expect(inferOutputFormat(null)).toBe('json');
         expect(inferOutputFormat(undefined)).toBe('json');
+    });
+});
+
+describe('toBlocks', () => {
+    it('unwraps a present() wrapper, mapping type→kind and deriving table columns', () => {
+        const wrapper = {
+            __kind: 'blocks',
+            blocks: [
+                { __kind: 'block', type: 'markdown', text: '# Title' },
+                {
+                    __kind: 'block',
+                    type: 'table',
+                    rows: [
+                        { a: 1, b: 2 },
+                        { a: 3, c: 4 },
+                    ],
+                    title: 'T',
+                    caption: 'cap',
+                },
+                { __kind: 'block', type: 'chart', option: { series: [] } },
+            ],
+        };
+        expect(toBlocks(wrapper)).toEqual([
+            { kind: 'markdown', text: '# Title' },
+            {
+                kind: 'table',
+                // union of keys across all rows, first-seen order
+                columns: ['a', 'b', 'c'],
+                rows: [
+                    { a: 1, b: 2 },
+                    { a: 3, c: 4 },
+                ],
+                title: 'T',
+                caption: 'cap',
+            },
+            { kind: 'chart', option: { series: [] } },
+        ]);
+    });
+
+    it('honors explicit table columns over derived ones', () => {
+        const block = {
+            __kind: 'block',
+            type: 'table',
+            columns: ['b', 'a'],
+            rows: [{ a: 1, b: 2 }],
+        };
+        expect(toBlocks(block)).toEqual([
+            { kind: 'table', columns: ['b', 'a'], rows: [{ a: 1, b: 2 }] },
+        ]);
+    });
+
+    it('coerces AG-Grid-style column descriptor objects to string field names', () => {
+        // The model sometimes passes `{ field, headerName }` objects — these
+        // must become string names or AG-Grid crashes on `field.includes`.
+        const block = {
+            __kind: 'block',
+            type: 'table',
+            columns: [{ field: 'id', headerName: 'ID' }, { name: 'amount' }],
+            rows: [{ id: 1, amount: 2 }],
+        };
+        expect(toBlocks(block)).toEqual([
+            { kind: 'table', columns: ['id', 'amount'], rows: [{ id: 1, amount: 2 }] },
+        ]);
+    });
+
+    it('treats a bare flat-record array as one table block', () => {
+        expect(toBlocks([{ a: 1 }, { a: 2 }])).toEqual([
+            { kind: 'table', columns: ['a'], rows: [{ a: 1 }, { a: 2 }] },
+        ]);
+    });
+
+    it('returns [] for shapes that are not blocks (renderer falls back to JSON)', () => {
+        expect(toBlocks({ totalRows: 42 })).toEqual([]);
+        expect(toBlocks('a string')).toEqual([]);
+        expect(toBlocks(42)).toEqual([]);
+    });
+});
+
+describe('normalizeTableColumns', () => {
+    const rows = [{ a: 1, b: 2 }];
+    it('passes string column names through', () => {
+        expect(normalizeTableColumns(['a', 'b'], rows)).toEqual(['a', 'b']);
+    });
+    it('extracts field/name/key/id from column-descriptor objects', () => {
+        expect(
+            normalizeTableColumns([{ field: 'a' }, { name: 'b' }, { key: 'c' }, { id: 'd' }], rows),
+        ).toEqual(['a', 'b', 'c', 'd']);
+    });
+    it('falls back to row keys when columns is absent, empty, or unusable', () => {
+        expect(normalizeTableColumns(undefined, rows)).toEqual(['a', 'b']);
+        expect(normalizeTableColumns([], rows)).toEqual(['a', 'b']);
+        expect(normalizeTableColumns([{ headerName: 'only-a-header' }], rows)).toEqual(['a', 'b']);
+    });
+});
+
+describe('deriveTableColumns', () => {
+    it('unions keys across all rows preserving first-seen order', () => {
+        expect(deriveTableColumns([{ a: 1, b: 2 }, { b: 3, c: 4 }, { a: 5 }])).toEqual([
+            'a',
+            'b',
+            'c',
+        ]);
+    });
+
+    it('handles sparse rows where a column is absent from the first row', () => {
+        expect(deriveTableColumns([{ a: 1 }, { a: 2, z: 9 }])).toEqual(['a', 'z']);
     });
 });
 

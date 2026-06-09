@@ -2,7 +2,7 @@
 #
 # Upload the production bundle to the GCS buckets behind eatmydata.ai.
 #
-# Layout (see vite.config.ts): the demo .sqlite databases, the tiny-pii
+# Layout (see vite.config.ts): the demo .sqlite databases, the transformers
 # model/ort assets and the wa-sqlite/qjs engine wasm each live under a
 # top-level folder named by a checksum of their content; the app's JS/CSS
 # chunks live under a per-build `<pkg.version>-<timestamp>` folder.

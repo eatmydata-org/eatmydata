@@ -15,8 +15,12 @@ dist-ssr
 # wasm build artefacts
 build
 src/assets/demo/
-src/assets/tiny-pii/
+src/assets/transformers/
 src/assets/wasm/
+# bge-embed: large GGUF weights (fetched via `make embed-model`) + the
+# downloaded UnicodeData.txt cache used to regenerate unicode-data.c.
+src/assets/models/
+wasm/bge-embed/tools/unicode-data.txt
 
 # Editor directories and files
 .vscode/*
@@ -36,4 +40,7 @@ CLAUDE.md
 # deploy
 keys
 secrets
+
+# Chrome --user-data-dir for CDP debugging (launched under the repo root)
+chrome-debug-profile/
 

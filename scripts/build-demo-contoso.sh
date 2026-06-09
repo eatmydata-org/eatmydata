@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build public/demo/contoso.sqlite from SQL BI's Contoso V2 100K release.
+# Build src/assets/demo/contoso.sqlite from SQL BI's Contoso V2 100K release.
 #
 # Two upstream sources:
 #   - contrib/contoso-data-generator-v2/scripts/sql/ — DDL scripts authored by
@@ -18,7 +18,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GEN_SUBMODULE="$ROOT/contrib/contoso-data-generator-v2"
-OUT_DIR="$ROOT/public/demo"
+OUT_DIR="$ROOT/src/assets/demo"
 OUT="$OUT_DIR/contoso.sqlite"
 
 # Pin to a specific release tag so the artifact is reproducible.
@@ -272,3 +272,8 @@ fi
 size=$(du -h "$OUT" | cut -f1)
 tables=$(sqlite3 "$OUT" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
 echo "[contoso] wrote $OUT ($size, $tables tables, $sales_rows sales rows, $orderrows order rows)"
+
+# Prebuild the semantic-search indexes (best-effort; needs `make transformers`).
+# Non-fatal so a missing model / vector hiccup never aborts `make demo-data`.
+pnpm exec tsx --tsconfig "$ROOT/tsconfig.node.json" "$ROOT/scripts/build-demo-index.ts" "$OUT" \
+    || echo "[contoso] semantic index step failed; shipping unindexed"

@@ -7,6 +7,10 @@ interface ImportMetaEnv {
     readonly VITE_DEV_GOOGLE_AI_STUDIO_KEY?: string;
 }
 
+// Ambient augmentation of the global `ImportMeta` so `import.meta.env` is
+// typed as `ImportMetaEnv`. Consumed by the type checker, not by runtime
+// code, so the linter can't see the use.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 interface ImportMeta {
     readonly env: ImportMetaEnv;
 }
@@ -21,11 +25,12 @@ declare module 'virtual:worker-versions' {
 }
 
 declare global {
-    /** Root-relative base URL for the tiny-pii model + tokenizer + ort wasm.
-     *  Injected by vite.config.ts. Build: `/<content-hash>/tiny-pii`; dev:
-     *  `/src/assets/tiny-pii`; vitest: `/test/tiny-pii`. The hash keeps the
-     *  URL stable across releases while the assets are unchanged. */
-    const PII_ASSET_BASE: string;
+    /** Root-relative base URL for the Transformers Worker's models +
+     *  tokenizers + ort wasm. Injected by vite.config.ts. Build:
+     *  `/<content-hash>/transformers`; dev: `/src/assets/transformers`;
+     *  vitest: `/test/transformers`. The hash keeps the URL stable across
+     *  releases while the assets are unchanged. */
+    const TRANSFORMERS_ASSET_BASE: string;
     /** Root-relative base URL for the demo `.sqlite` databases. Injected by
      *  vite.config.ts. Build: `/<content-hash>/demo`; dev: `/src/assets/demo`;
      *  vitest: `/test/demo`. */

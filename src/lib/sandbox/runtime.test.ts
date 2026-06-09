@@ -2,11 +2,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setWasmLoader } from '@/libs/qjs';
+import { setWasmLoader } from '@/lib/qjs';
 import { runInSandbox } from './runtime';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const wasmPath = resolve(__dirname, '../../../public/qjs.wasm');
+const wasmPath = resolve(__dirname, '../../../src/assets/wasm/qjs.wasm');
 
 beforeAll(async () => {
     // Inject the local wasm file as bytes — Node's fetch can't resolve the
@@ -126,10 +126,10 @@ describe('runInSandbox', () => {
 
     it('user-code runtime error reports a USER-CODE line number, not a wrapped-script line', async () => {
         const userCode = [
-            "const a = 1;",
-            "const b = 2;",
+            'const a = 1;',
+            'const b = 2;',
             "throw new Error('boom');",
-            "__output = a + b;",
+            '__output = a + b;',
         ].join('\n');
         const result = await runInSandbox({ code: userCode });
         expect(result.ok).toBe(false);
@@ -153,11 +153,9 @@ describe('runInSandbox', () => {
     it('preserves line numbers across TS stripping', async () => {
         // Line 1 has a TS-only annotation; line 3 throws. If ts-blank-space
         // didn't preserve whitespace, the reported line would shift to 2.
-        const code = [
-            'const x: number = 1;',
-            'const y = x + 1;',
-            "throw new Error('boom');",
-        ].join('\n');
+        const code = ['const x: number = 1;', 'const y = x + 1;', "throw new Error('boom');"].join(
+            '\n',
+        );
         const result = await runInSandbox({ code });
         expect(result.ok).toBe(false);
         if (!result.ok) {
@@ -174,11 +172,11 @@ describe('runInSandbox', () => {
         // small the wrapper could cap at.
         const result = await runInSandbox({
             code: [
-                "const out = [];",
-                "for (let i = 0; i < 4000; i++) {",
+                'const out = [];',
+                'for (let i = 0; i < 4000; i++) {',
                 "  out.push({ i, label: 'row-' + i + '-' + 'x'.repeat(8) });",
-                "}",
-                "__output = JSON.stringify(out);",
+                '}',
+                '__output = JSON.stringify(out);',
             ].join('\n'),
         });
         expect(result.ok).toBe(true);
@@ -192,6 +190,56 @@ describe('runInSandbox', () => {
                 i: 3999,
                 label: 'row-3999-xxxxxxxx',
             });
+        }
+    });
+
+    it('md()/chart()/table() build tagged blocks; present() wraps them', async () => {
+        const result = await runInSandbox({
+            code: "present(md('## Hi'), table([{ a: 1 }], { title: 'T' }), chart({ series: [] }));",
+        });
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.output).toEqual({
+                __kind: 'blocks',
+                blocks: [
+                    { __kind: 'block', type: 'markdown', text: '## Hi' },
+                    { __kind: 'block', type: 'table', rows: [{ a: 1 }], title: 'T' },
+                    { __kind: 'block', type: 'chart', option: { series: [] } },
+                ],
+            });
+        }
+    });
+
+    it('md supports the tagged-template form md`…${x}…`', async () => {
+        const result = await runInSandbox({
+            code: 'const total = 42; present(md`Revenue: **${total}**`);',
+        });
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.output).toEqual({
+                __kind: 'blocks',
+                blocks: [{ __kind: 'block', type: 'markdown', text: 'Revenue: **42**' }],
+            });
+        }
+    });
+
+    it('present() accumulates blocks across multiple calls', async () => {
+        const result = await runInSandbox({
+            code: "present(md('a')); present(md('b'));",
+        });
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            const out = result.output as { blocks: unknown[] };
+            expect(out.blocks.length).toBe(2);
+        }
+    });
+
+    it('table(nonArray) throws a user-code TypeError', async () => {
+        const result = await runInSandbox({ code: "present(table('nope'));" });
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+            expect(result.phase).toBe('user-code');
+            expect(result.error).toMatch(/rows must be an array/);
         }
     });
 

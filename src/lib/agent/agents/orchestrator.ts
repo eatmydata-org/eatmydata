@@ -1,6 +1,11 @@
 import { buildOrchestratorPrompt } from '../prompt';
 import { resolveAgentModelId } from '../models';
-import { askUserSchema, orchestratorTools, workOnActionSchema } from '../tools';
+import {
+    askUserSchema,
+    buildPlannerSchemaManifest,
+    orchestratorTools,
+    workOnActionSchema,
+} from '../tools';
 import { requestConfirmation } from '../confirmation';
 import type { AgentDefinition, AgentRunCtx, ToolExecutor } from '../agent-def';
 import type { Action, ActionKind, DataSource } from '@/lib/actions/types';
@@ -143,6 +148,202 @@ function previewsMatch(a: SavedDataSourcePreview[], b: SavedDataSourcePreview[])
 }
 
 /**
+ * Result of the Planner phase: either the drafted previews, or a terminal
+ * `IterationOutcome` to bubble straight out of `iterateOnAction`.
+ */
+type PlannerPhaseResult =
+    | { kind: 'ok'; previews: SavedDataSourcePreview[] }
+    | { kind: 'early'; outcome: IterationOutcome };
+
+/**
+ * Run the Planner: build the front-loaded schema manifest, spawn the planner,
+ * and translate its result into either drafted previews (pushed to the live
+ * draft) or a terminal iteration outcome (planner error / abort / empty).
+ */
+async function runPlannerPhase(
+    ctx: import('../agent-def').AgentRunCtx,
+    args: {
+        parsed: ReturnType<typeof workOnActionSchema.parse>;
+        draftId: string;
+        effectiveName: string;
+        priorPreviews: SavedDataSourcePreview[];
+        priorCode: string | undefined;
+        dataSourceId: string | undefined;
+    },
+): Promise<PlannerPhaseResult> {
+    const { parsed, draftId, effectiveName, priorPreviews, priorCode, dataSourceId } = args;
+    // Front-load the schema + searchable-column markers so the Planner
+    // doesn't have to discover them via list_tables/describe_table — and
+    // specifically so the semantic-search hint is always visible even if
+    // the model skips exploring the relevant table. Best-effort: a read
+    // failure degrades to no manifest (Planner falls back to its tools).
+    const schemaManifest = await safeBuildSchemaManifest(dataSourceId);
+    const plannerInstruction = buildPlannerKickoffInstruction(
+        parsed.intent,
+        priorPreviews,
+        priorCode,
+        schemaManifest,
+    );
+    const plannerResult = await ctx.spawn('planner', {
+        instruction: plannerInstruction,
+        context: {
+            actionName: effectiveName,
+            draftId,
+            dataSourceId,
+            existingPreviews: priorPreviews,
+        },
+    });
+    if (!plannerResult.ok) {
+        setInflight(draftId, false);
+        return {
+            kind: 'early',
+            outcome: {
+                kind: 'failed',
+                card: {
+                    reason: 'planner-error',
+                    detail: plannerResult.error,
+                },
+                toolResult: {
+                    ok: false,
+                    error: `FAILED: data source planning errored (${plannerResult.error}). The action was NOT created. Do NOT retry by exploring the schema yourself. Tell the user the action was not created and use \`ask_user\` to offer concrete next steps (e.g. refine the intent, narrow the scope, switch data source).`,
+                },
+            },
+        };
+    }
+    // F2 typed ABORT: the Planner can decline with text starting
+    // with `ABORT:` per its prompt; the loop's spawnSubAgent
+    // promotes that into `{ kind: 'aborted', reason }`. Treat as a
+    // distinct outcome from an empty-but-non-aborted run.
+    const plannerData = plannerResult.data as
+        | SavedDataSourcePreview[]
+        | { kind: 'aborted'; reason: string }
+        | undefined;
+    if (plannerData && !Array.isArray(plannerData) && plannerData.kind === 'aborted') {
+        setInflight(draftId, false);
+        return {
+            kind: 'early',
+            outcome: {
+                kind: 'aborted',
+                reason: plannerData.reason,
+                card: {
+                    reason: 'planner-aborted',
+                    detail: `Planner ABORTed: ${plannerData.reason}`,
+                },
+            },
+        };
+    }
+    const previews = Array.isArray(plannerData) ? plannerData : [];
+    if (previews.length === 0) {
+        setInflight(draftId, false);
+        return {
+            kind: 'early',
+            outcome: {
+                kind: 'failed',
+                card: { reason: 'planner-empty' },
+                toolResult: {
+                    ok: false,
+                    error: 'FAILED: no data sources were drafted. The action was NOT created. Do NOT retry by exploring the schema yourself. Tell the user the action was not created and use `ask_user` to propose 2-3 alternative angles (e.g. different scope, different breakdown, different focus).',
+                },
+            },
+        };
+    }
+    pushDataSources(draftId, previews);
+    return { kind: 'ok', previews };
+}
+
+/**
+ * Result of the Coder phase: either the finalized code + kind, or a terminal
+ * `IterationOutcome` to bubble straight out of `iterateOnAction`.
+ */
+type CoderPhaseResult =
+    | { kind: 'ok'; finalKind: ActionKind; finalCode: string }
+    | { kind: 'early'; outcome: IterationOutcome };
+
+/**
+ * Spawn the Coder and translate its result into either the finalized
+ * code/kind or a terminal iteration outcome (coder error / abort / empty).
+ * Clears the inflight + pending-review state on every early exit.
+ */
+async function runCoderPhase(
+    ctx: import('../agent-def').AgentRunCtx,
+    args: CoderSpawnArgs,
+): Promise<CoderPhaseResult> {
+    const { draftId } = args;
+    const coderResult = await spawnCoder(ctx, args);
+    if (!coderResult.ok) {
+        setInflight(draftId, false);
+        clearPendingReview(draftId);
+        return {
+            kind: 'early',
+            outcome: {
+                kind: 'failed',
+                card: {
+                    reason: 'coder-error',
+                    detail: coderResult.error,
+                },
+                toolResult: {
+                    ok: false,
+                    error: `FAILED: the analysis step errored (${coderResult.error}). The action was NOT created. Tell the user the analysis step did not complete and use \`ask_user\` to offer concrete alternatives (e.g. different output shape, different focus).`,
+                },
+            },
+        };
+    }
+    const coderOutput = coderResult.data as
+        | { kind: 'code'; code: string }
+        | { kind: 'markdown'; template: string }
+        | { kind: 'aborted'; reason: string }
+        | undefined;
+    if (coderOutput?.kind === 'aborted') {
+        // F2 typed ABORT: the Coder said it cannot answer with the
+        // available data sources. F3's iteration loop reads this and
+        // tries one more pass with the abort reason merged into the
+        // next intent (forcing a Planner replan).
+        setInflight(draftId, false);
+        clearPendingReview(draftId);
+        return {
+            kind: 'early',
+            outcome: {
+                kind: 'aborted',
+                reason: coderOutput.reason,
+                card: {
+                    reason: 'coder-aborted',
+                    detail: `Coder ABORTed: ${coderOutput.reason}`,
+                },
+            },
+        };
+    }
+    if (!coderOutput || (coderOutput.kind === 'code' ? !coderOutput.code : !coderOutput.template)) {
+        setInflight(draftId, false);
+        clearPendingReview(draftId);
+        // Surface the Coder's last assistant text — that's where stream
+        // errors (`[stream error: …]`), refusals, or explanatory prose end
+        // up when the model returns without calling a finalize tool.
+        // Without this, "no code step was finalized" hides whether the
+        // model refused, hit a rate limit, or just drifted off the tool
+        // path.
+        const lastText = (coderResult.summary ?? '').trim();
+        const detail = lastText
+            ? `coder finished without calling run_in_sandbox / save_markdown_action. Last assistant text:\n${lastText}`
+            : 'coder finished without producing any text or finalization call.';
+        return {
+            kind: 'early',
+            outcome: {
+                kind: 'failed',
+                card: { reason: 'coder-empty', detail },
+                toolResult: {
+                    ok: false,
+                    error: `FAILED: no code step was finalized. The action was NOT created. ${detail} Tell the user the analysis step did not complete and use \`ask_user\` to offer concrete alternatives (e.g. different output shape, different focus).`,
+                },
+            },
+        };
+    }
+
+    const finalKind: ActionKind = coderOutput.kind;
+    const finalCode = coderOutput.kind === 'markdown' ? coderOutput.template : coderOutput.code;
+    return { kind: 'ok', finalKind, finalCode };
+}
+
+/**
  * Run one planner→coder→user-review cycle. Returns a structured
  * outcome the caller can either bubble out as a tool result or feed
  * back into the next iteration with augmented intent. Replaces the
@@ -199,7 +400,6 @@ async function iterateOnAction(
         versions,
     });
 
-    let previews: SavedDataSourcePreview[];
     // F4: always run the Planner. When `priorPreviews` exists the
     // Planner runs in REPLAN mode (seeded with the existing draft set);
     // its onIdleTurn already short-circuits to a no-op hand-off if the
@@ -207,80 +407,39 @@ async function iterateOnAction(
     // returns previews byte-identical to `priorPreviews`, the runtime
     // reuses the committed action's DataSource ids — keeping the
     // Coder's code rebindings stable.
-    {
-        const plannerInstruction = buildPlannerKickoffInstruction(
-            parsed.intent,
-            priorPreviews,
-            priorCode,
-        );
-        const plannerResult = await ctx.spawn('planner', {
-            instruction: plannerInstruction,
-            context: {
-                actionName: effectiveName,
-                draftId,
-                dataSourceId: current?.action?.dataSourceId,
-                existingPreviews: priorPreviews,
-            },
-        });
-        if (!plannerResult.ok) {
-            setInflight(draftId, false);
-            return {
-                kind: 'failed',
-                card: {
-                    reason: 'planner-error',
-                    detail: plannerResult.error,
-                },
-                toolResult: {
-                    ok: false,
-                    error: `FAILED: data source planning errored (${plannerResult.error}). The action was NOT created. Do NOT retry by exploring the schema yourself. Tell the user the action was not created and use \`ask_user\` to offer concrete next steps (e.g. refine the intent, narrow the scope, switch data source).`,
-                },
-            };
-        }
-        // F2 typed ABORT: the Planner can decline with text starting
-        // with `ABORT:` per its prompt; the loop's spawnSubAgent
-        // promotes that into `{ kind: 'aborted', reason }`. Treat as a
-        // distinct outcome from an empty-but-non-aborted run.
-        const plannerData = plannerResult.data as
-            | SavedDataSourcePreview[]
-            | { kind: 'aborted'; reason: string }
-            | undefined;
-        if (plannerData && !Array.isArray(plannerData) && plannerData.kind === 'aborted') {
-            setInflight(draftId, false);
-            return {
-                kind: 'aborted',
-                reason: plannerData.reason,
-                card: {
-                    reason: 'planner-aborted',
-                    detail: `Planner ABORTed: ${plannerData.reason}`,
-                },
-            };
-        }
-        previews = Array.isArray(plannerData) ? plannerData : [];
-        if (previews.length === 0) {
-            setInflight(draftId, false);
-            return {
-                kind: 'failed',
-                card: { reason: 'planner-empty' },
-                toolResult: {
-                    ok: false,
-                    error: 'FAILED: no data sources were drafted. The action was NOT created. Do NOT retry by exploring the schema yourself. Tell the user the action was not created and use `ask_user` to propose 2-3 alternative angles (e.g. different scope, different breakdown, different focus).',
-                },
-            };
-        }
-        pushDataSources(draftId, previews);
-    }
+    const plannerPhase = await runPlannerPhase(ctx, {
+        parsed,
+        draftId,
+        effectiveName,
+        priorPreviews,
+        priorCode,
+        dataSourceId: current?.action?.dataSourceId,
+    });
+    if (plannerPhase.kind !== 'ok') return plannerPhase.outcome;
+    const previews = plannerPhase.previews;
 
-    // F4: when the Planner returned an unchanged set, reuse the
-    // committed action's DataSource array so ids stay stable across
-    // iterations (URLs / external refs continue to resolve). On any
-    // schema change — new source, modified SQL, dropped source — we
-    // rebuild the array; the Coder's code references previews by
-    // `name`, so name-stable changes don't break it, but ids must
-    // belong to the live set.
+    // `unchanged` (used below for the `iterated` flag) reports whether the
+    // Planner returned the same `(name, query)` set as the live draft — a
+    // pure "no source change" iteration.
     const unchanged = current?.action !== undefined && previewsMatch(previews, priorPreviews);
-    const dataSources: DataSource[] = unchanged
-        ? current!.action!.dataSources
-        : previews.map(previewToDataSource);
+    // Always derive `dataSources` from `previews` — the exact set the Coder
+    // bound its sandbox globals to and wrote code against. We reuse a
+    // committed DataSource row (and its stable id, so URLs / external refs
+    // keep resolving) ONLY where the committed set has a source with the same
+    // name AND query; any preview without such a match — e.g. a source added
+    // in a prior in-turn iteration that never committed — gets a fresh
+    // DataSource. The previous `unchanged ? current.action.dataSources : …`
+    // branch bound the STALE committed subset whenever the draft's live
+    // previews had outgrown the committed set, so the executor's globals
+    // diverged from what the Coder validated against (ReferenceError on the
+    // dropped sources at the review step).
+    const committedByName = new Map(
+        (current?.action?.dataSources ?? []).map((d) => [d.name, d] as const),
+    );
+    const dataSources: DataSource[] = previews.map((p) => {
+        const committed = committedByName.get(p.name);
+        return committed && committed.query === p.query ? committed : previewToDataSource(p);
+    });
     // Propagate the resolved display name onto the persisted Action too.
     // `beginDraft` above already moved `effectiveName` into the live draft,
     // but the spread of `current.action` would otherwise carry the OLD
@@ -305,73 +464,14 @@ async function iterateOnAction(
     // code minimally to fit the (possibly extended) source set.
     const previousCode = priorCode;
 
-    const coderResult = await spawnCoder(ctx, {
+    const coderPhase = await runCoderPhase(ctx, {
         intent: parsed.intent,
         previews,
         previousCode,
         draftId,
     });
-    if (!coderResult.ok) {
-        setInflight(draftId, false);
-        clearPendingReview(draftId);
-        return {
-            kind: 'failed',
-            card: {
-                reason: 'coder-error',
-                detail: coderResult.error,
-            },
-            toolResult: {
-                ok: false,
-                error: `FAILED: the analysis step errored (${coderResult.error}). The action was NOT created. Tell the user the analysis step did not complete and use \`ask_user\` to offer concrete alternatives (e.g. different output shape, different focus).`,
-            },
-        };
-    }
-    const coderOutput = coderResult.data as
-        | { kind: 'code'; code: string }
-        | { kind: 'markdown'; template: string }
-        | { kind: 'aborted'; reason: string }
-        | undefined;
-    if (coderOutput?.kind === 'aborted') {
-        // F2 typed ABORT: the Coder said it cannot answer with the
-        // available data sources. F3's iteration loop reads this and
-        // tries one more pass with the abort reason merged into the
-        // next intent (forcing a Planner replan).
-        setInflight(draftId, false);
-        clearPendingReview(draftId);
-        return {
-            kind: 'aborted',
-            reason: coderOutput.reason,
-            card: {
-                reason: 'coder-aborted',
-                detail: `Coder ABORTed: ${coderOutput.reason}`,
-            },
-        };
-    }
-    if (!coderOutput || (coderOutput.kind === 'code' ? !coderOutput.code : !coderOutput.template)) {
-        setInflight(draftId, false);
-        clearPendingReview(draftId);
-        // Surface the Coder's last assistant text — that's where stream
-        // errors (`[stream error: …]`), refusals, or explanatory prose end
-        // up when the model returns without calling a finalize tool.
-        // Without this, "no code step was finalized" hides whether the
-        // model refused, hit a rate limit, or just drifted off the tool
-        // path.
-        const lastText = (coderResult.summary ?? '').trim();
-        const detail = lastText
-            ? `coder finished without calling run_in_sandbox / save_markdown_action. Last assistant text:\n${lastText}`
-            : 'coder finished without producing any text or finalization call.';
-        return {
-            kind: 'failed',
-            card: { reason: 'coder-empty', detail },
-            toolResult: {
-                ok: false,
-                error: `FAILED: no code step was finalized. The action was NOT created. ${detail} Tell the user the analysis step did not complete and use \`ask_user\` to offer concrete alternatives (e.g. different output shape, different focus).`,
-            },
-        };
-    }
-
-    const finalKind: ActionKind = coderOutput.kind;
-    const finalCode = coderOutput.kind === 'markdown' ? coderOutput.template : coderOutput.code;
+    if (coderPhase.kind !== 'ok') return coderPhase.outcome;
+    const { finalKind, finalCode } = coderPhase;
 
     // Build a candidate Action — NOT persisted. executeAction reads only
     // from the passed object, so this is safe.
@@ -654,13 +754,31 @@ export function orchestratorAgent(): AgentDefinition {
  * previous code so the Planner can extend the set, reuse names where
  * the SQL is unchanged, and avoid cold-starting the schema exploration.
  */
+/**
+ * Build the schema manifest for the Planner kickoff, swallowing read errors
+ * into an empty string (the Planner then falls back to list_tables /
+ * describe_table). Logged, never silent.
+ */
+async function safeBuildSchemaManifest(sourceId: string | undefined): Promise<string> {
+    try {
+        return await buildPlannerSchemaManifest(sourceId);
+    } catch (e) {
+        console.warn('[orchestrator] schema manifest build failed; planner will explore', e);
+        return '';
+    }
+}
+
 export function buildPlannerKickoffInstruction(
     intent: string,
     existingPreviews: SavedDataSourcePreview[],
     previousCode: string | undefined,
+    schemaManifest = '',
 ): string {
+    const schemaBlock = schemaManifest
+        ? `\n\nDATABASE SCHEMA — you do NOT need list_tables; the structure and any semantically-searchable columns are listed here:\n${schemaManifest}`
+        : '';
     if (existingPreviews.length === 0) {
-        return intent;
+        return schemaBlock ? `User intent: ${intent}${schemaBlock}` : intent;
     }
     const manifest = existingPreviews
         .map((p, i) => {
@@ -681,7 +799,7 @@ This is a REPLAN against an existing draft. The previous Planner run produced th
 
 Existing data sources:
 
-${manifest}${codeBlock}
+${manifest}${codeBlock}${schemaBlock}
 
 Your job: produce the SET of sources that answers the NEW intent. You may
   - keep an existing source unchanged (re-save it with the same name and query — the runtime dedupes by name),
@@ -726,7 +844,7 @@ Available data sources (each is bound on globalThis under the given name as an a
 
 ${manifest}${previousBlock}
 
-Write TypeScript or JavaScript that uses these data sources to answer the user's question. Assign the final value to \`__output\` and the runtime infers how to render it from the shape (string → markdown; ECharts option object → single chart; ARRAY of ECharts option objects → multi-card dashboard; other object/array → JSON). If the user is asking for a chart/dashboard/visualization, build an ECharts option object and use the \`validate_echarts\` tool to check it before calling \`run_in_sandbox\`. PREFER multiple charts (assign an array) when the data has more than one story — different metrics with different scales/units, different aggregations, or different breakdowns of the same dataset. Each card stays focused; the renderer auto-links cards that share categories or axis names. Otherwise produce a markdown string. The values you see above are PERTURBED samples — synthetic category aliases, flattened frequencies, noised+clamped numerics, independently shuffled columns. Use them to confirm SHAPE only; never treat values, vocabularies, frequencies, or row-level associations as ground truth. Your code will later be re-run against the real result rows of these queries.`;
+Write TypeScript or JavaScript that uses these data sources to answer the user's question. Compose the answer from blocks and finalize with \`present(...)\`: \`md(text)\` for markdown prose/headings/small tables, \`chart(option)\` for an ECharts chart (validate with \`validate_echarts\` first), and \`table(rows, { columns?, title?, caption? })\` for ANY tabular data — \`table()\` renders as an interactive virtualized grid and is the ONLY table surface, at any size (never hand-build a markdown/HTML table — markdown is for prose only). PREFER multiple \`chart()\` blocks when the data has more than one story — different metrics/scales, aggregations, or breakdowns; adjacent charts auto-link when they share categories or axis names. For a purely textual answer with light computation, use \`save_markdown_action\` instead. The values you see above are PERTURBED samples — synthetic category aliases, flattened frequencies, noised+clamped numerics, independently shuffled columns. Use them to confirm SHAPE only; never treat values, vocabularies, frequencies, or row-level associations as ground truth. Your code will later be re-run against the real result rows of these queries.`;
 }
 
 function safeJson(x: unknown): string {

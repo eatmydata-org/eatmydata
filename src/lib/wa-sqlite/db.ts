@@ -14,6 +14,7 @@ import {
     type ExtraCapi,
     SQLITE_DESERIALIZE_FREEONCLOSE,
     SQLITE_DESERIALIZE_RESIZEABLE,
+    SQLITE_SERIALIZE_NOCOPY,
 } from './capi';
 import { isBusyError, retryOnBusy } from './busy';
 import {
@@ -121,6 +122,29 @@ function classifyDbError(e: unknown): unknown {
     return e;
 }
 
+/**
+ * Map a single EXPLAIN/VDBE constant-load opcode to the literal it loads, or
+ * `null` if it carries none. `String8` keeps a UTF-8 string from p4;
+ * `Int64`/`Real` render their p4 text; `Integer` reads a small int from p1.
+ * Helper for `#extractSqlLiterals` (keeps its per-row loop flat).
+ */
+function literalForOpcode(opcode: string, p1: unknown, p4: unknown): string | null {
+    switch (opcode) {
+        case 'String8':
+            // p4 holds the UTF-8 string literal.
+            return typeof p4 === 'string' ? p4 : null;
+        case 'Int64':
+        case 'Real':
+            // p4 holds a text rendering of the numeric literal.
+            return p4 !== null && p4 !== undefined ? String(p4) : null;
+        case 'Integer':
+            // Small integer literal lives in p1, not p4.
+            return p1 !== null && p1 !== undefined ? String(p1) : null;
+        default:
+            return null;
+    }
+}
+
 export class WaSqliteDb {
     #sqlite3: SQLiteAPI | null = null;
     #module: unknown = null;
@@ -191,6 +215,12 @@ export class WaSqliteDb {
                     db,
                     'SELECT name, type FROM sqlite_master ' +
                         "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' " +
+                        // Hide the rh vector-search extension's shadow + sidecar
+                        // tables (_rhvec_config / _rhvec_quant* / _rhvec_search_map
+                        // / _rhvec_emb_*) from every schema consumer — the agent's
+                        // describe tool, the Tables UI, the obfuscation sampler.
+                        // The extension reads them via its own SQL, never getSchema.
+                        "AND name NOT LIKE '\\_rhvec\\_%' ESCAPE '\\' " +
                         'ORDER BY type, name',
                     (row) => {
                         objects.push({
@@ -221,8 +251,24 @@ export class WaSqliteDb {
         }
     }
 
-    async loadFile(data: ArrayBuffer | Uint8Array): Promise<void> {
-        const { sqlite3, db, capi, module } = this.#require();
+    /**
+     * Mount a `.sqlite` byte image into this `:memory:` connection.
+     *
+     * `growthHeadroomBytes` over-allocates the deserialized buffer so sqlite
+     * can grow the db *in place* up to that headroom without reallocating.
+     * This matters because `SQLITE_DESERIALIZE_RESIZEABLE` growth-by-realloc
+     * corrupts the database in this wasi-sdk build (a read of an unrelated
+     * table after only ~2 MB of inserts returns SQLITE_NOTADB) — pre-sizing the
+     * buffer past the final size sidesteps the realloc entirely. Callers that
+     * only READ a loaded image (the common case) leave it 0; a caller that
+     * loads-then-writes heavily (the demo-data semantic indexer, which appends
+     * embedding sidecars) passes enough headroom to cover the writes.
+     */
+    async loadFile(
+        data: ArrayBuffer | Uint8Array,
+        opts: { growthHeadroomBytes?: number } = {},
+    ): Promise<void> {
+        const { db, capi, module } = this.#require();
         const m = module as {
             _malloc: (n: number) => number;
             _free: (p: number) => void;
@@ -230,13 +276,17 @@ export class WaSqliteDb {
         };
 
         const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        const headroom = Math.max(0, Math.floor(opts.growthHeadroomBytes ?? 0));
+        const bufBytes = bytes.byteLength + headroom;
 
         // Copy bytes into WASM memory. SQLITE_DESERIALIZE_FREEONCLOSE
         // transfers ownership to sqlite — once deserialize succeeds we
         // must NOT free. sqlite calls `sqlite3_free` on the buffer on
         // close; in this Emscripten build it's wired to the same heap as
-        // `_malloc`, so the ownership transfer is safe.
-        const dataPtr = m._malloc(bytes.byteLength);
+        // `_malloc`, so the ownership transfer is safe. We allocate `bufBytes`
+        // (image + headroom) but tell sqlite only `bytes.byteLength` is live
+        // data (`szDb`), so the extra tail is free space it grows into.
+        const dataPtr = m._malloc(bufBytes);
         m.HEAPU8.set(bytes, dataPtr);
 
         // Null-terminated UTF-8 "main" schema name.
@@ -251,7 +301,7 @@ export class WaSqliteDb {
                 schemaPtr,
                 dataPtr,
                 bytes.byteLength,
-                bytes.byteLength,
+                bufBytes,
                 SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE,
             );
         } finally {
@@ -264,7 +314,78 @@ export class WaSqliteDb {
             throw new Error(`sqlite3_deserialize failed (rc=${rc})`);
         }
         // dataPtr is now owned by sqlite (FREEONCLOSE) — do not free.
-        void sqlite3; // silence unused-binding lint without restructuring.
+    }
+
+    /**
+     * Allocate `size` bytes in the WASM heap and return the pointer.
+     * Returns 0 on failure (same as C malloc). The caller owns the memory
+     * and must release it with freeWasmBuffer() when done.
+     *
+     * Build-script use only — lets callers pre-allocate a single large buffer
+     * to reuse across many loadFileInBuffer() calls, avoiding the dlmalloc
+     * large-block-reuse issue in WASM where a free+malloc cycle of a ~2 GB
+     * block hits the max-memory ceiling on the second allocation attempt.
+     */
+    allocateWasmBuffer(size: number): number {
+        const { module } = this.#require();
+        return (module as { _malloc: (n: number) => number })._malloc(size);
+    }
+
+    /** Release a buffer previously allocated with allocateWasmBuffer(). */
+    freeWasmBuffer(ptr: number): void {
+        const { module } = this.#require();
+        (module as { _free: (n: number) => void })._free(ptr);
+    }
+
+    /**
+     * Like loadFile(), but uses a caller-managed buffer (no FREEONCLOSE).
+     * `bufferPtr` must be a WASM pointer allocated via allocateWasmBuffer()
+     * (or the same pointer passed in a previous loadFileInBuffer() call).
+     * SQLite detaches the previous 'main' database without freeing the buffer,
+     * then attaches the new one — so the same buffer address can be reused
+     * across many calls without any malloc/free cycles.
+     *
+     * The caller must call freeWasmBuffer(bufferPtr) after the final
+     * close(), and must NOT call close() between column batches (just
+     * call loadFileInBuffer() again to replace the database in place).
+     */
+    async loadFileInBuffer(
+        data: ArrayBuffer | Uint8Array,
+        bufferPtr: number,
+        bufferSize: number,
+    ): Promise<void> {
+        const { db, capi, module } = this.#require();
+        const m = module as {
+            _malloc: (n: number) => number;
+            _free: (p: number) => void;
+            HEAPU8: Uint8Array;
+        };
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        if (bytes.byteLength > bufferSize) {
+            throw new Error(
+                `loadFileInBuffer: data (${bytes.byteLength} B) exceeds buffer (${bufferSize} B)`,
+            );
+        }
+        m.HEAPU8.set(bytes, bufferPtr);
+        const schemaBytes = new TextEncoder().encode('main\0');
+        const schemaPtr = m._malloc(schemaBytes.byteLength);
+        m.HEAPU8.set(schemaBytes, schemaPtr);
+        let rc;
+        try {
+            rc = capi.deserialize(
+                db,
+                schemaPtr,
+                bufferPtr,
+                bytes.byteLength,
+                bufferSize,
+                SQLITE_DESERIALIZE_RESIZEABLE, // no FREEONCLOSE — caller owns the buffer
+            );
+        } finally {
+            m._free(schemaPtr);
+        }
+        if (rc !== 0) {
+            throw new Error(`sqlite3_deserialize failed (rc=${rc})`);
+        }
     }
 
     /**
@@ -272,8 +393,13 @@ export class WaSqliteDb {
      * Useful for tests that need a `.sqlite` blob to feed back into
      * `loadFile()`, and for exporting `:memory:` databases.
      *
-     * The returned bytes own their own heap allocation — the underlying
-     * sqlite-malloc buffer is freed before we return.
+     * For in-memory databases (the common case here), SQLITE_SERIALIZE_NOCOPY
+     * is tried first: it returns a pointer directly into the existing WASM
+     * buffer with no additional allocation, which is critical when the buffer
+     * is already large (e.g. a 1.5 GB indexed demo db — a regular serialize
+     * would need another 1.5 GB allocation in the same 2 GB WASM heap). Falls
+     * back to the allocating path if NOCOPY returns 0 (e.g. WAL mode or
+     * non-memory database).
      */
     async serialize(): Promise<Uint8Array> {
         const { capi, module } = this.#require();
@@ -288,7 +414,14 @@ export class WaSqliteDb {
         m.HEAPU8.set(schemaBytes, schemaPtr);
         const sizePtr = m._malloc(8);
         try {
-            const dataPtr = capi.serialize(db, schemaPtr, sizePtr, 0);
+            // NOCOPY: pointer into the existing buffer; do NOT call capi.free().
+            let dataPtr = capi.serialize(db, schemaPtr, sizePtr, SQLITE_SERIALIZE_NOCOPY);
+            let owned = false;
+            if (dataPtr === 0) {
+                // Fall back: sqlite allocates a new copy; caller must free it.
+                dataPtr = capi.serialize(db, schemaPtr, sizePtr, 0);
+                owned = true;
+            }
             if (dataPtr === 0) {
                 throw new Error('sqlite3_serialize returned null (out of memory or empty schema)');
             }
@@ -298,7 +431,7 @@ export class WaSqliteDb {
             const size = new DataView(m.HEAPU8.buffer, sizePtr, 8).getUint32(0, true);
             const out = new Uint8Array(size);
             out.set(m.HEAPU8.subarray(dataPtr, dataPtr + size));
-            capi.free(dataPtr);
+            if (owned) capi.free(dataPtr);
             return out;
         } finally {
             m._free(schemaPtr);
@@ -317,8 +450,7 @@ export class WaSqliteDb {
      * execute the statement.
      */
     async validateQuery(sql: string): Promise<QueryValidation> {
-        const { sqlite3, capi } = this.#require();
-        const db = this.#db!;
+        const { capi } = this.#require();
         try {
             return await this.#withFirstStatement(sql, async (stmt, sqlConsumed) => {
                 if (!stmt) return { ok: false, error: 'Empty statement.' };
@@ -334,9 +466,6 @@ export class WaSqliteDb {
         } catch (e) {
             // Compilation errors land here — surface them as the validation error.
             return { ok: false, error: e instanceof Error ? e.message : String(e) };
-        } finally {
-            void sqlite3;
-            void db;
         }
     }
 
@@ -368,8 +497,7 @@ export class WaSqliteDb {
     }
 
     async #execWithCap(sql: string, cap: number, readonly: boolean): Promise<QueryResult> {
-        const { sqlite3, db, capi } = this.#require();
-        void db; // retained for symmetry — unused in this function body
+        const { sqlite3, capi } = this.#require();
         // Retry transient cross-tab SQLITE_BUSY/LOCKED with backoff. The VFS
         // time-shares one exclusive OPFS handle between tabs, so a contended
         // open/step can briefly report BUSY (see ./busy.ts).
@@ -415,7 +543,14 @@ export class WaSqliteDb {
                     }
                     const row: Record<string, unknown> = {};
                     for (let i = 0; i < colCount; i++) {
-                        row[columns[i]!] = sqlite3.column(stmt, i);
+                        const value = sqlite3.column(stmt, i);
+                        // BLOB columns come back as a Uint8Array view straight
+                        // into the wasm heap (wa-sqlite's column_blob does
+                        // HEAPU8.subarray) — valid only until the next wasm
+                        // call. Copy it so the materialized row survives the
+                        // finalize/step that follows. Non-blob values (number,
+                        // string, null) are already detached.
+                        row[columns[i]!] = value instanceof Uint8Array ? value.slice() : value;
                     }
                     rows.push(row);
                 }
@@ -531,27 +666,12 @@ export class WaSqliteDb {
                 while ((await sqlite3.step(stmt)) === SQLite.SQLITE_ROW) {
                     const opcode = sqlite3.column(stmt, opcodeIdx);
                     if (typeof opcode !== 'string') continue;
-                    switch (opcode) {
-                        case 'String8': {
-                            // p4 holds the UTF-8 string literal.
-                            const v = sqlite3.column(stmt, p4Idx);
-                            if (typeof v === 'string') out.add(v);
-                            break;
-                        }
-                        case 'Int64':
-                        case 'Real': {
-                            // p4 holds a text rendering of the numeric literal.
-                            const v = sqlite3.column(stmt, p4Idx);
-                            if (v !== null && v !== undefined) out.add(String(v));
-                            break;
-                        }
-                        case 'Integer': {
-                            // Small integer literal lives in p1, not p4.
-                            const v = sqlite3.column(stmt, p1Idx);
-                            if (v !== null && v !== undefined) out.add(String(v));
-                            break;
-                        }
-                    }
+                    const literal = literalForOpcode(
+                        opcode,
+                        sqlite3.column(stmt, p1Idx),
+                        sqlite3.column(stmt, p4Idx),
+                    );
+                    if (literal !== null) out.add(literal);
                 }
             });
         } catch (e) {

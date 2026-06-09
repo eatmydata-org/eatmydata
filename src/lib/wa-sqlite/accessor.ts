@@ -3,6 +3,7 @@ import { WaSqliteDb } from './db';
 import type { SqliteDbInitOptions } from './types';
 import { getWorkerSessionId } from '@/lib/data-sources/session';
 import { withVfsFileLock, tryWithVfsFileLock, SKIPPED } from './file-lock';
+import { maybeWarmSemanticSearch, embedTexts } from './semantic-embed';
 
 /**
  * Convert an arbitrary "filename" into an OPFS-leaf-safe name.
@@ -49,6 +50,10 @@ export class WaSqliteDbInstanceAccessor {
             }
             throw e;
         }
+        // Detached: if this DB has a semantic index, start warming the
+        // in-thread embedding model so vector_search() is ready by query time.
+        // Gated inside — a DB with no _rhvec_search_map costs nothing.
+        maybeWarmSemanticSearch(db);
         return Comlink.proxy(db);
     }
 
@@ -140,7 +145,6 @@ export class WaSqliteDbInstanceAccessor {
         // Do NOT close our own connection first: if this worker has the file
         // open, the held lock makes `tryWithVfsFileLock` skip — which is the
         // safe outcome (don't delete a file in use anywhere, including here).
-        void name;
         const result = await tryWithVfsFileLock(leaf, async () => {
             try {
                 const root = await navigator.storage.getDirectory();
@@ -217,5 +221,17 @@ export class WaSqliteDbInstanceAccessor {
             }
         });
         return this.get(name, { filename });
+    }
+
+    /**
+     * Embed `texts` using the in-process BGE C engine — now compiled INTO
+     * wa-sqlite.wasm and sharing one model with the C `vector_search` query
+     * path (see ./semantic-embed). Runs synchronously in the worker thread so
+     * it does not block the main thread; warms the model on first call
+     * (idempotent). Used by the browser semantic-index builder as a
+     * non-blocking async embedder.
+     */
+    async embed(texts: string[]): Promise<number[][]> {
+        return embedTexts(texts);
     }
 }

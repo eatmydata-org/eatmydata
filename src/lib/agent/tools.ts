@@ -1,7 +1,8 @@
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import { resolveDb } from '@/lib/data-sources/resolver';
-import { isMetaTable } from '@/lib/data-sources/db';
+import { isMetaTable, getLowCardColumns, ensureCardinalityAnalyzed } from '@/lib/data-sources/db';
+import { LOW_CARD_MAX_DISTINCT } from '@/lib/data-sources/low-cardinality';
 import type { ColumnInfo, ForeignKey, QueryResult, TableSchema } from '@/lib/wa-sqlite/types';
 import type { PlanInput, SavedQuery } from '@/lib/types';
 import { getActiveSanitizer } from './sample-sanitizer';
@@ -113,7 +114,7 @@ export const agentTools = {
     }),
     describe_table: tool({
         description:
-            'Return the columns (name, type, nullability, primary-key flag) and foreign-key relationships of one table.',
+            'Return the columns (name, type, nullability, primary-key flag) and foreign-key relationships of one table. Columns detected as low-cardinality (categorical) carry a `low_card_values` field listing their complete set of distinct values from the live data — use it to write correct WHERE/CASE clauses against real category names instead of guessing or sampling. These are real values, not the aliased placeholders data_sample returns; absence of the field means the column is high-cardinality (ids, free text, etc.) or the object is a view.',
         inputSchema: describeTableSchema,
     }),
     data_sample: tool({
@@ -138,12 +139,12 @@ export const agentTools = {
     }),
     run_in_sandbox: tool({
         description:
-            'Coder-only. Submits a candidate code step for the Action. The runtime: (1) runs the JS inside a QuickJS sandbox with the data sources bound as named globals; (2) if it throws, returns the error + your code listing so you can fix and retry; (3) if it runs without throwing, the runtime AUTOMATICALLY presents the code to the user for approval (Execute / Save+Execute / Cancel). On user Cancel you may revise and call again. Input: `code` (a string of JS that assigns the final value to `__output`). The output format (markdown, JSON, ECharts spec) is inferred from the shape of `__output` at execution time — do not specify it. The sandbox is stateless between calls.',
+            'Coder-only. Submits a candidate code step for the Action. The runtime: (1) runs the JS inside a QuickJS sandbox with the data sources bound as named globals; (2) if it throws, returns the error + your code listing so you can fix and retry; (3) if it runs without throwing, the runtime AUTOMATICALLY presents the code to the user for approval (Execute / Save+Execute / Cancel). On user Cancel you may revise and call again. Input: `code` (a string of JS). Compose the answer from blocks and finalize with the `present(...)` global: `md(text)` for markdown prose/headings (NOT tables), `chart(option)` for an ECharts chart, and `table(rows, { columns?, title?, caption? })` for ANY tabular data — `table()` renders as an interactive virtualized grid (sort/filter/search/CSV/Excel) and is the ONLY table surface, never a markdown/HTML table, at any size. Adjacent `chart()` blocks form one coordinated dashboard. The sandbox is stateless between calls.',
         inputSchema: runInSandboxSchema,
     }),
     save_markdown_action: tool({
         description:
-            'Coder-only. Final ANSWER for textual analyses. Submits a markdown TEMPLATE — plain markdown with JS-template-literal `${expr}` interpolations against the bound data sources. Cheaper than `run_in_sandbox` when the answer is mostly prose/tables with a few computed values: no code wrapping, no per-line JS. The runtime: (1) wraps your template as `__output = \\`<template>\\`` and runs it inside QuickJS to validate every `${expr}`; (2) if it throws, returns the error so you can fix and retry; (3) if it runs without throwing, the runtime AUTOMATICALLY presents the code to the user for approval (Execute / Save+Execute / Cancel). Choose THIS tool over `run_in_sandbox` whenever the user asked for a textual/markdown answer and the computation is light (a few totals, counts, percentages). Use `run_in_sandbox` for charts (ECharts), heavy data manipulation, or anything that needs multi-line logic. Input: `template` (string of markdown with `${...}` interpolations, NOT wrapped in backticks — you write the literal markdown). Available globals inside `${...}`: every data source name from the kickoff manifest, bound as `Array<{...}>`.',
+            'Coder-only. Final ANSWER for textual analyses. Submits a markdown TEMPLATE — plain markdown with JS-template-literal `${expr}` interpolations against the bound data sources. Cheaper than `run_in_sandbox` when the answer is mostly prose/tables with a few computed values: no code wrapping, no per-line JS. The runtime: (1) wraps your template as `__output = \\`<template>\\`` and runs it inside QuickJS to validate every `${expr}`; (2) if it throws, returns the error so you can fix and retry; (3) if it runs without throwing, the runtime AUTOMATICALLY presents the code to the user for approval (Execute / Save+Execute / Cancel). Choose THIS tool over `run_in_sandbox` whenever the user asked for a textual/markdown answer and the computation is light (a few totals, counts, percentages) with NO table. Do NOT build tables here — the moment the answer includes any rows × columns data, use `run_in_sandbox` with `table(rows)` instead. Use `run_in_sandbox` for charts (ECharts), any table, heavy data manipulation, or anything that needs multi-line logic. Input: `template` (string of markdown with `${...}` interpolations, NOT wrapped in backticks — you write the literal markdown). Available globals inside `${...}`: every data source name from the kickoff manifest, bound as `Array<{...}>`.',
         inputSchema: saveMarkdownActionSchema,
     }),
     validate_echarts: tool({
@@ -199,11 +200,37 @@ export type ToolResult = { ok: true; value: unknown } | { ok: false; error: stri
 
 export type ListTablesResult = { tables: Array<{ name: string; type: string }> };
 
+/**
+ * A column in `describe_table` output. Extends the engine's `ColumnInfo`
+ * with the optional categorical value set (present only for columns detected
+ * as low-cardinality).
+ */
+export type DescribeColumn = ColumnInfo & {
+    /**
+     * The complete set of distinct non-null values for a low-cardinality
+     * column, fetched from the live data at describe time and sorted.
+     * Omitted for high-cardinality columns and for views.
+     */
+    low_card_values?: Array<string | number>;
+    /**
+     * Present (true) when this column has an on-device semantic index, so the
+     * planner can match it by meaning via `vector_search(...)` (see the
+     * table-level `semantic_search` hint) instead of `LIKE`.
+     */
+    semantic_search?: true;
+};
+
 export type DescribeTableResult = {
     table: string;
     type: 'table' | 'view';
-    columns: ColumnInfo[];
+    columns: DescribeColumn[];
     foreign_keys: ForeignKey[];
+    /**
+     * Present only when one or more columns have a semantic index. Lists those
+     * columns and the exact SQL shape to use them. Surfaced so the planner
+     * reaches for meaning-based matching when the user's intent is fuzzy.
+     */
+    semantic_search?: { columns: string[]; usage: string };
 };
 
 export type DataSampleResult = QueryResult & {
@@ -283,12 +310,203 @@ async function runDescribeTable(table: string, sourceId?: string): Promise<Descr
     }
     const foreignKeys =
         entry.type === 'table' ? ((await db.getForeignKeys(table)) as ForeignKey[]) : [];
+
+    // Enumerate the live distinct values of categorical columns so the planner
+    // sees real category vocabularies (e.g. status IN ('cancelled', …)). The
+    // verdict is computed lazily on first describe — straight off the data, so
+    // it works for demos and pre-existing tables, not just file imports — and
+    // cached per column. Restricted to base tables: analyzing a view would
+    // re-run its (possibly expensive) query once per column.
+    let lowCard = new Set<string>();
+    if (entry.type === 'table') {
+        await ensureCardinalityAnalyzed(
+            db,
+            table,
+            entry.columns.map((c) => c.name),
+        );
+        lowCard = new Set(await getLowCardColumns(db, table));
+    }
+    // Columns with an on-device semantic index (built by semantic-index.ts and
+    // recorded in _rhvec_search_map). Lets the planner match by meaning via
+    // vector_search() rather than LIKE.
+    const searchable =
+        entry.type === 'table' ? await getSemanticSearchColumns(db, table) : new Set<string>();
+
+    const columns: DescribeColumn[] = [];
+    for (const col of entry.columns) {
+        const out: DescribeColumn = lowCard.has(col.name)
+            ? { ...col, low_card_values: await fetchDistinctValues(db, table, col.name) }
+            : { ...col };
+        if (searchable.has(col.name)) out.semantic_search = true;
+        columns.push(out);
+    }
+
     return {
         table,
         type: entry.type,
-        columns: entry.columns,
+        columns,
         foreign_keys: foreignKeys,
+        ...(searchable.size > 0
+            ? { semantic_search: { columns: [...searchable], usage: SEMANTIC_SEARCH_USAGE } }
+            : {}),
     };
+}
+
+/**
+ * One-line-per-clause instruction telling the planner how to use the semantic
+ * index. Returned alongside a table that has searchable columns.
+ */
+const SEMANTIC_SEARCH_USAGE =
+    "Match rows by MEANING (not substring) with vector_search('<table>','<column>','<phrase>', k), " +
+    'a table-valued function returning (rowid, distance) for the k nearest rows. ' +
+    "JOIN it back on rowid, e.g.: SELECT t.* FROM vector_search('product','name','dogs',20) v " +
+    'JOIN product t ON t.rowid = v.rowid ORDER BY v.distance. ' +
+    "Lower distance = more relevant. Prefer this over LIKE '%…%' for fuzzy / conceptual queries " +
+    '(it finds e.g. "puppy chow" for "dogs"); the phrase is whatever the user is asking about.';
+
+/**
+ * Columns of `table` that carry a semantic index, read from the extension's
+ * `_rhvec_search_map`. Tolerates the map table not existing (nothing indexed).
+ */
+async function getSemanticSearchColumns(
+    db: Awaited<ReturnType<typeof getDb>>,
+    table: string,
+): Promise<Set<string>> {
+    try {
+        const t = table.replace(/'/g, "''");
+        const r = await db.execRaw(
+            `SELECT base_col FROM _rhvec_search_map WHERE base_tbl='${t}'`,
+            500,
+        );
+        return new Set(r.rows.map((row) => String(row.base_col)));
+    } catch {
+        return new Set();
+    }
+}
+
+/**
+ * All semantically-indexed columns of the database, in ONE read of
+ * `_rhvec_search_map` (vs per-table). Returns table → set of searchable
+ * columns. Tolerates the map table not existing (nothing indexed → empty).
+ */
+async function getAllSemanticSearchMap(
+    db: Awaited<ReturnType<typeof getDb>>,
+): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>();
+    try {
+        const r = await db.execRaw('SELECT base_tbl, base_col FROM _rhvec_search_map', 1000);
+        for (const row of r.rows) {
+            const tbl = String(row.base_tbl);
+            const col = String(row.base_col);
+            if (!out.has(tbl)) out.set(tbl, new Set());
+            out.get(tbl)!.add(col);
+        }
+    } catch {
+        // No map table yet → nothing searchable.
+    }
+    return out;
+}
+
+// Front-loaded schema is tiered: a small schema gets full structure
+// (columns + types + keys + searchable markers); a large one degrades to a
+// table-name list (+ the always-present searchable manifest) so a 200-table
+// warehouse doesn't blow the planner's context every turn. low_card_values are
+// NEVER front-loaded — that scan stays lazy in describe_table.
+const MANIFEST_TABLE_LIMIT = 30;
+const MANIFEST_COLUMN_LIMIT = 250;
+
+/**
+ * Build the compact schema manifest the orchestrator prepends to the Planner
+ * kickoff so it sees the structure — and which columns are semantically
+ * searchable — WITHOUT having to call list_tables/describe_table first (the
+ * `semantic_search` marker is otherwise undiscoverable unless the model
+ * happens to describe the right table). Cheap: sqlite_master + per-table
+ * foreign_key_list + one `_rhvec_search_map` read; no value enumeration.
+ * Returns '' when the source has no user objects (or can't be read).
+ */
+export async function buildPlannerSchemaManifest(sourceId?: string): Promise<string> {
+    const db = await getDb(sourceId);
+    const schema = (await db.getSchema()) as TableSchema[];
+    const objects = schema.filter((t) => !isMetaTable(t.name));
+    if (objects.length === 0) return '';
+    const tables = objects.filter((t) => t.type === 'table');
+    const views = objects.filter((t) => t.type === 'view');
+    const searchMap = await getAllSemanticSearchMap(db);
+
+    const lines: string[] = [];
+
+    // Searchable columns: ALWAYS front-loaded (tiny + otherwise undiscoverable).
+    const searchableList: string[] = [];
+    for (const [tbl, cols] of searchMap) {
+        for (const col of cols) searchableList.push(`${tbl}.${col}`);
+    }
+    if (searchableList.length > 0) {
+        lines.push(
+            `Semantic search is available — match these columns by MEANING (not LIKE): ${searchableList.join(', ')}.`,
+        );
+        lines.push(SEMANTIC_SEARCH_USAGE);
+        lines.push('');
+    }
+
+    const totalCols = tables.reduce((n, t) => n + t.columns.length, 0);
+    const full = tables.length <= MANIFEST_TABLE_LIMIT && totalCols <= MANIFEST_COLUMN_LIMIT;
+
+    if (full) {
+        lines.push('Tables:');
+        for (const t of tables) {
+            const fks = (await db.getForeignKeys(t.name)) as ForeignKey[];
+            const fkByCol = new Map(fks.map((f) => [f.column, `${f.refTable}.${f.refColumn}`]));
+            const searchableCols = searchMap.get(t.name);
+            const cols = t.columns.map((c) => {
+                const parts = [`${c.name}:${c.type || '?'}`];
+                if (c.pk) parts.push('PK');
+                const fk = fkByCol.get(c.name);
+                if (fk) parts.push(`→${fk}`);
+                if (searchableCols?.has(c.name)) parts.push('[search]');
+                return parts.join(' ');
+            });
+            lines.push(`  ${t.name}(${cols.join(', ')})`);
+        }
+    } else {
+        lines.push(
+            `Tables (${tables.length}) — large schema, names only; call describe_table for columns:`,
+        );
+        lines.push(`  ${tables.map((t) => t.name).join(', ')}`);
+    }
+    if (views.length > 0) {
+        lines.push('');
+        lines.push(
+            `Views: ${views.map((v) => v.name).join(', ')} (call describe_table for columns).`,
+        );
+    }
+    lines.push('');
+    lines.push(
+        "Call describe_table(<table>) for a column's real category values (low_card_values) before writing WHERE/CASE against them.",
+    );
+    return lines.join('\n');
+}
+
+/**
+ * Read the distinct non-null values of one (already known to be
+ * low-cardinality) column, sorted. Capped at `LOW_CARD_MAX_DISTINCT` as a
+ * defensive bound — by construction a marked column has at most that many.
+ */
+async function fetchDistinctValues(
+    db: Awaited<ReturnType<typeof getDb>>,
+    table: string,
+    column: string,
+): Promise<Array<string | number>> {
+    const t = table.replace(/"/g, '""');
+    const c = column.replace(/"/g, '""');
+    // execFull (not execQuery): read-only, but without execQuery's hard 20-row
+    // cap — a low-cardinality column can hold up to LOW_CARD_MAX_DISTINCT values.
+    const res = await db.execFull(
+        `SELECT DISTINCT "${c}" AS v FROM "${t}" WHERE "${c}" IS NOT NULL ORDER BY "${c}"`,
+        LOW_CARD_MAX_DISTINCT,
+    );
+    return res.rows
+        .map((r) => r.v)
+        .filter((v): v is string | number => typeof v === 'string' || typeof v === 'number');
 }
 
 async function runDataSample(

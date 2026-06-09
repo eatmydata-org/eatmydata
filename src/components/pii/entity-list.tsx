@@ -1,6 +1,6 @@
 import { type Component, For, Show } from 'solid-js';
 import { EntityBadge } from './entity-badge';
-import type { PiiEntity, PiiDetector } from '@/lib/pii/client';
+import type { PiiEntity, PiiDetector } from '@/lib/transformers/client';
 
 const DETECTOR_CHIP: Record<PiiDetector, string> = {
     ner: 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30',

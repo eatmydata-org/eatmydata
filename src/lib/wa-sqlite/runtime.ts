@@ -28,28 +28,35 @@ interface FactoryOptions {
     wasmBinary?: ArrayBuffer | Uint8Array;
 }
 
-type Pointer = number;
-type FunctionPointer = number;
-
 type WasmExports = Record<string, WebAssembly.ExportValue> & {
     memory: WebAssembly.Memory;
     _initialize: () => void;
-    malloc: (n: number) => Pointer;
-    free: (p: Pointer) => void;
-    sqlite3_malloc: (n: number) => Pointer;
-    sqlite3_free: (p: Pointer) => void;
+    malloc: (n: number) => number;
+    free: (p: number) => void;
+    sqlite3_malloc: (n: number) => number;
+    sqlite3_free: (p: number) => void;
     analyst_wa_init: () => number;
+    // Semantic (BGE) engine, compiled into wa-sqlite.wasm (see CMakeLists.txt +
+    // wasm/wa-sqlite/src/runtime_shim.c). The C `vector_search` vtab calls
+    // `sem_embed` directly to embed a query phrase — no JS hook. JS only loads
+    // the GGUF once (`sem_init`) and drives the async index embedder; see
+    // ./semantic-embed.ts. Auto-exposed on the module object as `_sem_*`.
+    sem_init: (ggufPtr: number, len: number) => number;
+    sem_embed: (textPtr: number, textLen: number, outPtr: number) => number;
+    sem_dim: () => number;
+    sem_kind: () => number;
+    sem_strerror: (rc: number) => number;
 };
 
 export interface WaSqliteModule {
     HEAPU8: Uint8Array;
     HEAP32: Int32Array;
     HEAPU32: Uint32Array;
-    _malloc: (n: number) => Pointer;
-    _free: (p: Pointer) => void;
-    _sqlite3_malloc: (n: number) => Pointer;
-    _sqlite3_free: (p: Pointer) => void;
-    _getSqliteFree: () => FunctionPointer;
+    _malloc: (n: number) => number;
+    _free: (p: number) => void;
+    _sqlite3_malloc: (n: number) => number;
+    _sqlite3_free: (p: number) => void;
+    _getSqliteFree: () => number;
     cwrap: (
         name: string,
         returnType: string | null,
@@ -62,42 +69,42 @@ export interface WaSqliteModule {
         argTypes: string[] | null,
         args: unknown[],
     ) => unknown;
-    getValue: (ptr: Pointer, type: string) => number;
-    setValue: (ptr: Pointer, value: number, type: string) => void;
+    getValue: (ptr: number, type: string) => number;
+    setValue: (ptr: number, value: number, type: string) => void;
     getTempRet0: () => number;
-    UTF8ToString: (ptr: Pointer, maxBytesToRead?: number) => string;
-    setCallback: (key: Pointer, target: unknown) => void;
-    getCallback: (key: Pointer) => unknown;
-    deleteCallback: (key: Pointer) => void;
+    UTF8ToString: (ptr: number, maxBytesToRead?: number) => string;
+    setCallback: (key: number, target: unknown) => void;
+    getCallback: (key: number) => unknown;
+    deleteCallback: (key: number) => void;
     vfs_register: (vfs: unknown, makeDefault: boolean) => number;
     create_function: (
-        db: Pointer,
+        db: number,
         zFunctionName: string,
         nArg: number,
         eTextRep: number,
-        pApp: Pointer,
-        xFunc: ((ctx: Pointer, argc: number, values: Pointer) => void) | null,
-        xStep: ((ctx: Pointer, argc: number, values: Pointer) => void) | null,
-        xFinal: ((ctx: Pointer) => void) | null,
+        pApp: number,
+        xFunc: ((ctx: number, argc: number, values: number) => void) | null,
+        xStep: ((ctx: number, argc: number, values: number) => void) | null,
+        xFinal: ((ctx: number) => void) | null,
     ) => number;
     progress_handler: (
-        db: Pointer,
+        db: number,
         nOps: number,
-        xProgress: ((pApp: Pointer) => number) | null,
-        userData: Pointer,
+        xProgress: ((pApp: number) => number) | null,
+        userData: number,
     ) => void;
-    commit_hook: (db: Pointer, xCommitHook: (() => number) | null) => void;
+    commit_hook: (db: number, xCommitHook: (() => number) | null) => void;
     update_hook: (
-        db: Pointer,
+        db: number,
         xUpdateHook:
             | ((type: number, dbName: string, tblName: string, lo32: number, hi32: number) => void)
             | null,
     ) => void;
     set_authorizer: (
-        db: Pointer,
+        db: number,
         xAuthorizer:
             | ((
-                  pApp: Pointer,
+                  pApp: number,
                   iAction: number,
                   p3: string,
                   p4: string,
@@ -105,7 +112,7 @@ export interface WaSqliteModule {
                   p6: string,
               ) => number)
             | null,
-        pApp: Pointer,
+        pApp: number,
     ) => number;
     handleAsync: ((fn: () => unknown) => unknown) | null;
     retryOps: unknown[];
@@ -137,11 +144,13 @@ async function fetchWasm(): Promise<ArrayBuffer> {
     if (typeof process !== 'undefined' && process.versions?.node) {
         const { readFile } = await import('node:fs/promises');
         const { fileURLToPath } = await import('node:url');
-        // In Node (vitest), the `WASM_URL` we built above is rooted at the
-        // module's location — fileURLToPath gives us a disk path. In
-        // production we resolve via vite's static asset map so this branch
-        // is dev/test-only.
-        const path = fileURLToPath(new URL('@/assets/wasm/wa-sqlite.wasm', import.meta.url));
+        // In Node (vitest / the demo build scripts) the `@` alias and vite's
+        // `new URL(..., import.meta.url)` asset rewrite don't run, so resolve
+        // the artifact relative to this module instead: runtime.ts lives at
+        // src/lib/wa-sqlite/, the wasm at src/assets/wasm/. In production we
+        // resolve via vite's static asset map (the fetch branch below), so
+        // this branch is dev/test-only.
+        const path = fileURLToPath(new URL('../../assets/wasm/wa-sqlite.wasm', import.meta.url));
         const bytes = await readFile(path);
         return bytes.buffer.slice(
             bytes.byteOffset,
@@ -176,6 +185,7 @@ function wasiStub(
     const u8 = () => new Uint8Array(getMemory().buffer);
     const dv = () => new DataView(getMemory().buffer);
     return {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- WASI import ABI: arity is fixed even when the stub ignores its args.
         environ_get: (_argv: number, _buf: number) => 0,
         environ_sizes_get: (countOut: number, sizeOut: number) => {
             const d = dv();
@@ -183,6 +193,7 @@ function wasiStub(
             d.setUint32(sizeOut, 0, true);
             return 0;
         },
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- WASI import ABI: arity is fixed even when the stub ignores its args.
         args_get: (_argv: number, _buf: number) => 0,
         args_sizes_get: (countOut: number, sizeOut: number) => {
             const d = dv();
@@ -258,18 +269,30 @@ function wasiStub(
  * Asyncify path is not wired through this runtime.
  */
 /**
- * Split an i64 (BigInt at the WASM boundary) into the (lo32, hi32) signed-
- * int pair the committed wa-sqlite JS surface expects. wa-sqlite was
- * written for Emscripten's legalized ABI — `FacadeVFS.xRead(pFile, pData,
- * iAmt, iOffsetLo, iOffsetHi)` takes two i32s; with wasi-sdk's native i64
- * the same C call would pass one BigInt. We legalize at the dispatch
- * boundary so the JS surface stays unchanged.
+ * Split an i64 dispatch arg into the (lo32, hi32) signed-int pair the committed
+ * wa-sqlite JS surface expects. wa-sqlite was written for Emscripten's legalized
+ * ABI — `FacadeVFS.xRead(pFile, pData, iAmt, iOffsetLo, iOffsetHi)` takes two
+ * i32s — so the VFS file offsets/sizes (`'j'` positions in SIGNATURES) must
+ * arrive here as two i32s downstream.
  *
- * Both halves are signed-i32 (Emscripten's convention) — `| 0` truncates
- * and reinterprets the sign bit. The downstream `delegalize` helper in
- * FacadeVFS undoes this correctly for both halves.
+ * The arg reaches us as EITHER:
+ *   - a BigInt — a wasm `i64` import param, which V8 hands to JS as a BigInt
+ *     (the native-i64 / Emscripten-legalized convention this was first written
+ *     for); or
+ *   - a plain Number — our current wasi-sdk-33/clang-22 `wa-sqlite.wasm` lowers
+ *     these import params to a single `i32` (verified: `env.ippppij` is
+ *     `(i32×6)=>i32`), so V8 passes a signed 32-bit Number, NOT a BigInt.
+ *     Mixing that Number with the `0xffffffffn` mask is exactly the
+ *     "Cannot mix BigInt and other types" TypeError this guards against.
+ *
+ * Coerce the Number form through its UNSIGNED 32-bit value (`v >>> 0`): the wasm
+ * only carried 32 bits, so the high word is 0 and the low word is the unsigned
+ * offset (a 2–4 GB offset arrives as a negative i32 and `>>> 0` restores it).
+ * Both halves come back signed-i32 (`| 0`); FacadeVFS's `delegalize` re-adds
+ * 2^32 to a negative low word, so the round-trip is exact for any file < 4 GB.
  */
-function legalizeI64(big: bigint): [number, number] {
+export function legalizeI64(v: number | bigint): [number, number] {
+    const big = typeof v === 'bigint' ? v : BigInt(v >>> 0);
     const lo = Number(big & 0xffffffffn) | 0;
     const hi = Number((big >> 32n) & 0xffffffffn) | 0;
     return [lo, hi];
@@ -294,8 +317,7 @@ function buildAdapters(getModule: () => WaSqliteModule) {
             if (j64Positions.length) {
                 for (let i = j64Positions.length - 1; i >= 0; i--) {
                     const pos = j64Positions[i]!;
-                    const big = args[pos] as bigint;
-                    const [lo, hi] = legalizeI64(big);
+                    const [lo, hi] = legalizeI64(args[pos] as number | bigint);
                     args.splice(pos, 1, lo, hi);
                 }
             }
@@ -389,7 +411,7 @@ function buildCwrap(
     const textDecoder = new TextDecoder('utf-8', { fatal: false });
     const textEncoder = new TextEncoder();
 
-    function readCString(ptr: Pointer): string {
+    function readCString(ptr: number): string {
         if (ptr === 0) return '';
         const heap = getModule().HEAPU8;
         let end = ptr;
@@ -397,7 +419,7 @@ function buildCwrap(
         return textDecoder.decode(heap.subarray(ptr, end));
     }
 
-    function allocCString(s: string): Pointer {
+    function allocCString(s: string): number {
         const bytes = textEncoder.encode(s);
         const ptr = exports.malloc(bytes.byteLength + 1);
         const heap = getModule().HEAPU8;
@@ -406,7 +428,7 @@ function buildCwrap(
         return ptr;
     }
 
-    function coerceArg(v: unknown, argType: string | undefined, tempAllocs: Pointer[]): unknown {
+    function coerceArg(v: unknown, argType: string | undefined, tempAllocs: number[]): unknown {
         if (argType === 'string') {
             if (typeof v === 'string') {
                 const p = allocCString(v);
@@ -430,6 +452,7 @@ function buildCwrap(
         name: string,
         returnType: string | null,
         argTypes: string[] | null,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- matches Emscripten's cwrap signature; callers may pass the async opts.
         _opts?: { async?: boolean },
     ): (...args: unknown[]) => unknown {
         const fn = exports[name] as ((...a: unknown[]) => unknown) | undefined;
@@ -448,7 +471,7 @@ function buildCwrap(
         const i64Set = new Set(i64Positions);
 
         return (...args: unknown[]): unknown => {
-            const stringTempAllocs: Pointer[] = [];
+            const stringTempAllocs: number[] = [];
             try {
                 let callArgs: unknown[];
                 if (isLegalized) {
@@ -482,7 +505,7 @@ function buildCwrap(
                 const raw = fn(...callArgs);
 
                 if (returnType === 'string') {
-                    return readCString(raw as Pointer);
+                    return readCString(raw as number);
                 }
                 if (returnType == null) return undefined;
                 if (typeof raw === 'bigint') {
@@ -500,18 +523,25 @@ function buildCwrap(
     return { cwrap, readCString, allocCString };
 }
 
+async function resolveWasmBytes(wasmBinary: FactoryOptions['wasmBinary']): Promise<ArrayBuffer> {
+    if (!wasmBinary) return fetchWasm();
+    if (wasmBinary instanceof Uint8Array) {
+        return wasmBinary.buffer.slice(
+            wasmBinary.byteOffset,
+            wasmBinary.byteOffset + wasmBinary.byteLength,
+        ) as ArrayBuffer;
+    }
+    return wasmBinary;
+}
+
 export async function createWaSqliteModule(options: FactoryOptions = {}): Promise<WaSqliteModule> {
-    const wasmBytes = options.wasmBinary
-        ? options.wasmBinary instanceof Uint8Array
-            ? (options.wasmBinary.buffer.slice(
-                  options.wasmBinary.byteOffset,
-                  options.wasmBinary.byteOffset + options.wasmBinary.byteLength,
-              ) as ArrayBuffer)
-            : options.wasmBinary
-        : await fetchWasm();
+    const wasmBytes = await resolveWasmBytes(options.wasmBinary);
 
     const state = { tempRet0: 0 };
-    // Forward declare so the adapters can read it during dispatch.
+    // Forward declare so the adapters/cwrap closures can read it during dispatch
+    // (they capture `() => mod` before it is assigned below), hence `let`, not
+    // `const`: the binding is initialized after those closures are built.
+    // eslint-disable-next-line prefer-const -- read-before-assign via closures; const would hit the TDZ.
     let mod!: WaSqliteModule;
 
     const adapters = buildAdapters(() => mod);
@@ -521,9 +551,14 @@ export async function createWaSqliteModule(options: FactoryOptions = {}): Promis
         return memoryRef;
     });
 
+    // NOTE: the C vector_search vtab's `analyst_embed_query` is no longer a JS
+    // env import — it's defined in C (runtime_shim.c) and embeds the query by
+    // calling the in-module `sem_embed` directly. JS only loads the GGUF once
+    // (see ./semantic-embed.ts). So nothing semantic is wired here.
+
     const wasmMod = await WebAssembly.compile(wasmBytes);
     const inst = await WebAssembly.instantiate(wasmMod, {
-        env: adapters,
+        env: { ...adapters },
         wasi_snapshot_preview1: wasi,
     });
     const exports = inst.exports as WasmExports;
@@ -554,13 +589,15 @@ export async function createWaSqliteModule(options: FactoryOptions = {}): Promis
 
     const { cwrap, readCString } = buildCwrap(exports, state, () => mod);
 
-    function utf8ToString(ptr: Pointer): string {
+    function utf8ToString(ptr: number): string {
         return readCString(ptr);
     }
 
-    function getValue(ptr: Pointer, type: string): number {
-        const heapU8 = cachedHeapU8!;
-        const dv = new DataView(heapU8.buffer);
+    function getValue(ptr: number, type: string): number {
+        // memory.grow detaches the old ArrayBuffer; refresh if it moved, or
+        // `new DataView(detachedBuffer)` throws (same guard as heapAccessor).
+        if (cachedHeapU8!.buffer !== exports.memory.buffer) refreshHeaps();
+        const dv = new DataView(cachedHeapU8!.buffer);
         switch (type) {
             case '*':
             case 'i32':
@@ -582,9 +619,9 @@ export async function createWaSqliteModule(options: FactoryOptions = {}): Promis
         }
     }
 
-    function setValue(ptr: Pointer, value: number, type: string): void {
-        const heapU8 = cachedHeapU8!;
-        const dv = new DataView(heapU8.buffer);
+    function setValue(ptr: number, value: number, type: string): void {
+        if (cachedHeapU8!.buffer !== exports.memory.buffer) refreshHeaps();
+        const dv = new DataView(cachedHeapU8!.buffer);
         switch (type) {
             case '*':
             case 'i32':
@@ -646,10 +683,10 @@ export async function createWaSqliteModule(options: FactoryOptions = {}): Promis
             return heapAccessor().u32;
         },
         _malloc: (n: number) => exports.malloc(n),
-        _free: (p: Pointer) => exports.free(p),
+        _free: (p: number) => exports.free(p),
         _sqlite3_malloc: (n: number) => exports.sqlite3_malloc(n),
-        _sqlite3_free: (p: Pointer) => exports.sqlite3_free(p),
-        _getSqliteFree: () => (exports.getSqliteFree as () => FunctionPointer)(),
+        _sqlite3_free: (p: number) => exports.sqlite3_free(p),
+        _getSqliteFree: () => (exports.getSqliteFree as () => number)(),
         cwrap,
         ccall,
         getValue,
@@ -810,7 +847,7 @@ export async function createWaSqliteModule(options: FactoryOptions = {}): Promis
         if (!result && xAuthorizer) {
             callbackTargets.set(
                 authorizerAsyncFlagsPtr,
-                (_: Pointer, iAction: number, p3: Pointer, p4: Pointer, p5: Pointer, p6: Pointer) =>
+                (_: number, iAction: number, p3: number, p4: number, p5: number, p6: number) =>
                     xAuthorizer(
                         pApp,
                         iAction,
@@ -843,10 +880,10 @@ export async function createWaSqliteModule(options: FactoryOptions = {}): Promis
             callbackTargets.set(
                 updateHookAsyncFlagsPtr,
                 (
-                    _: Pointer,
+                    _: number,
                     iUpdateType: number,
-                    dbName: Pointer,
-                    tblName: Pointer,
+                    dbName: number,
+                    tblName: number,
                     lo32: number,
                     hi32: number,
                 ) =>

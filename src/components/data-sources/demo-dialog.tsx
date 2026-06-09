@@ -119,6 +119,10 @@ export const DemoDialog: Component<Props> = (props) => {
             if (abortCtrl?.signal.aborted) {
                 setError('Cancelled.');
             } else {
+                // Surface the full error (with stack) to the console too — the UI
+                // only shows the message, which loses the stack that pinpoints
+                // failures like the wa-sqlite VFS i64 dispatch.
+                console.error('[demo-dialog] demo import failed', e);
                 setError(e instanceof Error ? e.message : String(e));
             }
         } finally {

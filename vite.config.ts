@@ -19,7 +19,7 @@ function bigintToBase62(val: bigint): string {
         val = val + 2n ** 64n;
     }
     while (val > 0) {
-        let remainder = val % base;
+        const remainder = val % base;
         result = ALPHABET[Number(remainder)] + result;
         val = val / base;
     }
@@ -54,7 +54,7 @@ function hashAssetDir(dir: string): string {
     } catch (err) {
         console.warn(
             `[asset-hash] ${dir} missing/unreadable (${String(err)}); using 'unbuilt'. ` +
-                `Run the matching make target (demo-data / tiny-pii / wa-sqlite) to populate it.`,
+                `Run the matching make target (demo-data / transformers / wa-sqlite) to populate it.`,
         );
         return 'unbuilt';
     }
@@ -74,25 +74,25 @@ export default defineConfig(({ command }) => {
             : 'src/assets';
     const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 
-    // Large static assets (the demo .sqlite databases, the tiny-pii model +
-    // tokenizer + ort wasm, and the wa-sqlite/qjs engine wasm) get a path
-    // keyed by a content checksum of their source folder — NOT the per-build
-    // APP_VERSION. An unchanged asset therefore keeps the same URL across
-    // releases, so deploy/deploy.sh can skip re-uploading it (and we don't
-    // balloon the CDN with byte-identical copies under fresh timestamps).
-    // In dev they stay under `src/assets/...` exactly as before; the checksum
-    // is computed only when bundling, never under `vite serve`.
+    // Large static assets (the demo .sqlite databases, the Transformers
+    // Worker's models + tokenizers + ort wasm, and the wa-sqlite/qjs engine
+    // wasm) get a path keyed by a content checksum of their source folder —
+    // NOT the per-build APP_VERSION. An unchanged asset therefore keeps the
+    // same URL across releases, so deploy/deploy.sh can skip re-uploading it
+    // (and we don't balloon the CDN with byte-identical copies under fresh
+    // timestamps). In dev they stay under `src/assets/...` exactly as before;
+    // the checksum is computed only when bundling, never under `vite serve`.
     const isServe = command === 'serve';
     const assetVersion = (rel: string): string =>
         isServe ? 'src/assets' : hashAssetDir(resolve(projectRoot, rel));
     const demoVersion = assetVersion('src/assets/demo');
-    const piiVersion = assetVersion('src/assets/tiny-pii');
+    const transformersVersion = assetVersion('src/assets/transformers');
     const wasmVersion = assetVersion('src/assets/wasm');
     // Root-relative bases injected as globals (below) and read at runtime by
-    // demo-source.ts / pii/worker.ts. Build: `/<hash>/demo`; dev:
+    // demo-source.ts / transformers/worker.ts. Build: `/<hash>/demo`; dev:
     // `/src/assets/demo`.
     const DEMO_ASSET_BASE = `/${demoVersion}/demo`;
-    const PII_ASSET_BASE = `/${piiVersion}/tiny-pii`;
+    const TRANSFORMERS_ASSET_BASE = `/${transformersVersion}/transformers`;
 
     // The LLM provider/model catalog is seeded from a JSON config file chosen
     // at build time. `APP_CONFIG` (a project-relative or absolute path) wins;
@@ -116,6 +116,16 @@ export default defineConfig(({ command }) => {
     return {
         server: {
             port: 5173,
+            watch: {
+                // A Chrome instance launched for CDP debugging keeps its
+                // --user-data-dir under the repo root (chrome-debug-profile/)
+                // and rewrites its Cache/History/Sessions hundreds of times a
+                // second. Vite's watcher treats each write as a source change
+                // and fires a full page reload — an infinite reload loop that
+                // also pegs the dev server near 100% CPU. Exclude it (Vite
+                // keeps its built-in node_modules/.git ignores; this appends).
+                ignored: ['**/chrome-debug-profile/**'],
+            },
         },
         plugins: [
             solid(
@@ -131,7 +141,7 @@ export default defineConfig(({ command }) => {
             // it's excluded from each hash. `test-worker.ts` under wa-sqlite is
             // dead (no importer); skip it so its edits don't force reloads.
             workerVersion([
-                { key: 'pii', dir: 'src/lib/pii', exclude: ['client.ts'] },
+                { key: 'transformers', dir: 'src/lib/transformers', exclude: ['client.ts'] },
                 {
                     key: 'wa-sqlite',
                     dir: 'src/lib/wa-sqlite',
@@ -142,8 +152,8 @@ export default defineConfig(({ command }) => {
             viteStaticCopy({
                 targets: [
                     {
-                        src: 'src/assets/tiny-pii/**',
-                        dest: `${piiVersion}/tiny-pii/`,
+                        src: 'src/assets/transformers/**',
+                        dest: `${transformersVersion}/transformers/`,
                         rename: { stripBase: 3 },
                     },
                     {
@@ -155,6 +165,10 @@ export default defineConfig(({ command }) => {
             }),
         ],
         publicDir: './public',
+        // .gguf (bge-embed model weights) isn't a built-in Vite asset type;
+        // register it so `new URL('@/assets/models/*.gguf', import.meta.url)` in
+        // src/lib/bge-embed/runtime.ts is emitted + served as a hashed asset.
+        assetsInclude: ['**/*.gguf'],
         build: {
             // Minify prod bundles (esbuild pass), and emit external source maps
             // so the minified output still resolves back to `src/...` in DevTools.
@@ -180,8 +194,13 @@ export default defineConfig(({ command }) => {
                     assetFileNames: (info) => {
                         const meta = info as { names?: string[]; name?: string };
                         const names = meta.names ?? (meta.name ? [meta.name] : []);
-                        const isWasm = names.some((n) => n.endsWith('.wasm'));
-                        return isWasm
+                        // Large engine binaries — wasm + the bge-embed .gguf weights —
+                        // go to the content-checksum folder so an unchanged build keeps
+                        // a stable URL across releases (no 67 MB re-download per deploy).
+                        const isEngineBinary = names.some(
+                            (n) => n.endsWith('.wasm') || n.endsWith('.gguf'),
+                        );
+                        return isEngineBinary
                             ? `${wasmVersion}/[name]-[hash][extname]`
                             : `${APP_VERSION}/[name]-[hash][extname]`;
                     },
@@ -196,13 +215,13 @@ export default defineConfig(({ command }) => {
         define: {
             global: 'globalThis',
             DEMO_ASSET_BASE: JSON.stringify(DEMO_ASSET_BASE),
-            PII_ASSET_BASE: JSON.stringify(PII_ASSET_BASE),
+            TRANSFORMERS_ASSET_BASE: JSON.stringify(TRANSFORMERS_ASSET_BASE),
         },
         resolve: {
             // Stop rolldown from emitting a phantom 23 MB
             // `ort-wasm-simd-threaded.asyncify-<hash>.wasm` into the bundle.
             //
-            // Chain: src/lib/pii/worker.ts imports @huggingface/transformers,
+            // Chain: src/lib/transformers/worker.ts imports @huggingface/transformers,
             // whose web build (`transformers.web.js`) does a *static*
             // `import * as ONNX_WEB from "onnxruntime-web/webgpu"`. That
             // export's `default` condition resolves to the *bundle* variant

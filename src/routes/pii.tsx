@@ -2,7 +2,13 @@ import { batch, createSignal, onCleanup, onMount, Show, type Component } from 's
 import { Button } from '@/registry/ui/button';
 import { TopBar } from '@/components/top-bar';
 import { PaneHeader, PaneHeaderTitle } from '@/components/pane-header';
-import { getPiiAccessor, PII_REGEX_ONLY, type PiiEntity, type PiiManifest } from '@/lib/pii/client';
+import {
+    getTransformersAccessor,
+    PII_REGEX_ONLY,
+    type PiiEntity,
+    type ManifestEntry,
+} from '@/lib/transformers/client';
+import { scoreDetection, type PredSpan } from '@/lib/bert-ner/pii-dataset';
 import {
     HighlightedTextarea,
     type HighlightedTextareaApi,
@@ -44,6 +50,27 @@ const SAMPLES = [
             '(employee ID E-44219), currently employed. Native language English, ' +
             'lives in Toronto, Ontario, Canada. Visit on 2025-04-12 at 14:30.',
     },
+    {
+        label: 'Dense mixed',
+        text:
+            'Customer Olivia Brown (olivia.brown@mail.com, +1-202-555-0143) paid with ' + // secret-scan-allow -- example email, PII-detection fixture
+            'card 6011 0009 9013 9424 from 203.0.113.7 on 2023-07-04.',
+    },
+    {
+        label: 'Banking + IDs',
+        text:
+            'Wire to IBAN DE89 3704 0044 0532 0130 00 (BIC COBADEFFXXX) by Friday. ' +
+            'Taxpayer SSN 078-05-1120; license Y1234567 issued in Texas; ' +
+            'US passport 310928461 expires 2030.',
+    },
+    {
+        label: 'Secrets + network',
+        text:
+            // eslint-disable-next-line no-secrets/no-secrets
+            'export AWS_SECRET=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY and token ' +
+            'ghp_16C7e42F292c6912E7710c838347Ae178B4a. Server at 10.0.12.7, ' + // secret-scan-allow -- example token, PII-detection fixture
+            'NIC 00:1b:44:11:3a:b7, portfolio https://www.jane-doe.dev/work.',
+    },
 ];
 
 const DEBOUNCE_MS = 400;
@@ -60,17 +87,25 @@ const PiiPage: Component = () => {
     const [inferMs, setInferMs] = createSignal<number | null>(null);
     const [regexMs, setRegexMs] = createSignal<number | null>(null);
     const [error, setError] = createSignal<string | null>(null);
-    const [manifest, setManifest] = createSignal<PiiManifest | null>(null);
+    const [manifest, setManifest] = createSignal<ManifestEntry | null>(null);
     const [api, setApi] = createSignal<HighlightedTextareaApi | null>(null);
     const [lastSubmit, setLastSubmit] = createSignal<{
         text: string;
         entities: PiiEntity[];
     } | null>(null);
-
+    // C-vs-ONNX comparison (dynamic-imports the ONNX path in the worker — only
+    // here and in /tests; never bundled into the main app).
+    const [comparison, setComparison] = createSignal<null | {
+        c: { n: number; ms: number };
+        onnx: { n: number; ms: number };
+        agreementPct: number;
+    }>(null);
+    const [comparing, setComparing] = createSignal(false);
+    const [compareError, setCompareError] = createSignal<string | null>(null);
     let debounceTimer: number | undefined;
     let runToken = 0;
 
-    const accessor = getPiiAccessor();
+    const accessor = getTransformersAccessor();
 
     onMount(() => {
         if (PII_REGEX_ONLY) {
@@ -84,15 +119,15 @@ const PiiPage: Component = () => {
         // the heavy ONNX still downloads.
         void (async () => {
             try {
-                setManifest(await accessor.getManifest());
+                setManifest(await accessor.getModelInfo('pii'));
             } catch (e) {
                 setError(e instanceof Error ? e.message : String(e));
             }
         })();
         void (async () => {
             try {
-                await accessor.warmup();
-                const ms = await accessor.bootElapsedMs();
+                await accessor.warmup('pii');
+                const ms = await accessor.bootElapsedMs('pii');
                 setBootMs(ms);
                 setReady(true);
                 scheduleAnalyze();
@@ -159,12 +194,50 @@ const PiiPage: Component = () => {
 
     const onInput = (next: string) => {
         setText(next);
+        setComparison(null);
         scheduleAnalyze();
     };
 
     const loadSample = (sampleText: string) => {
         setText(sampleText);
+        setComparison(null);
         scheduleAnalyze();
+    };
+
+    // Run both NER engines on the current text and report counts, timing, and how
+    // much the C engine's spans agree with the ONNX engine's (overlap F1). The
+    // ONNX path is dynamic-imported in the worker, so it's only fetched here.
+    const compareEngines = async () => {
+        const t = text();
+        if (!t.trim()) return;
+        setComparing(true);
+        setCompareError(null);
+        try {
+            const [c, onnx] = await Promise.all([
+                accessor.analyze(t, { withSources: true }),
+                accessor.analyzeOnnx(t, { withSources: true }),
+            ]);
+            const cPreds: PredSpan[] = c.entities.map((e) => ({
+                entity_type: e.entity_type,
+                start: e.start,
+                end: e.end,
+            }));
+            const onnxGold = onnx.entities.map((e) => ({
+                type: e.entity_type,
+                start: e.start,
+                end: e.end,
+            }));
+            const s = scoreDetection(cPreds, onnxGold);
+            setComparison({
+                c: { n: c.entities.length, ms: Math.round(c.stats.inferMs) },
+                onnx: { n: onnx.entities.length, ms: Math.round(onnx.stats.inferMs) },
+                agreementPct: Math.round(s.f1 * 100),
+            });
+        } catch (e) {
+            setCompareError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setComparing(false);
+        }
     };
 
     return (
@@ -242,6 +315,30 @@ const PiiPage: Component = () => {
                             <span class="text-muted-foreground">analyzing…</span>
                         </Show>
                     </span>
+                </Show>
+                <Show when={!PII_REGEX_ONLY && ready()}>
+                    <button
+                        type="button"
+                        class="px-2 py-0.5 rounded border bg-background hover:bg-muted/60 transition-colors whitespace-nowrap disabled:opacity-50"
+                        onClick={() => void compareEngines()}
+                        disabled={comparing() || !text().trim()}
+                        title="Run the ONNX model alongside the C engine (downloads the ONNX model on first use)"
+                    >
+                        {comparing() ? 'comparing…' : '⚖ compare vs ONNX'}
+                    </button>
+                    <Show when={comparison()}>
+                        {(cmp) => (
+                            <span class="text-muted-foreground whitespace-nowrap">
+                                C {cmp().c.n}·{cmp().c.ms}ms / ONNX {cmp().onnx.n}·{cmp().onnx.ms}ms
+                                · agree {cmp().agreementPct}%
+                            </span>
+                        )}
+                    </Show>
+                    <Show when={compareError()}>
+                        <span class="text-destructive whitespace-nowrap" title={compareError()!}>
+                            compare failed
+                        </span>
+                    </Show>
                 </Show>
                 <div class="ml-auto flex flex-wrap items-center justify-end gap-1.5">
                     <span class="text-muted-foreground">samples:</span>

@@ -111,6 +111,12 @@ function uniqueFilename(prefix: string): string {
     return `${prefix}-${randomToken(4)}.sqlite`;
 }
 
+/** Evaluate a scalar SQL expression and return the single cell. */
+async function scalarValue(db: Comlink.Remote<WaSqliteDb>, expr: string): Promise<unknown> {
+    const r = await db.execRaw(`SELECT ${expr} AS v`);
+    return (r.rows[0] as { v: unknown }).v;
+}
+
 export const WA_SQLITE_TESTS: TestDef[] = [
     {
         id: 'wa-sqlite-open-write-reopen',
@@ -450,6 +456,86 @@ export const WA_SQLITE_TESTS: TestDef[] = [
             } finally {
                 await safeRemoveOpfsFile(badFile);
                 await safeRemoveOpfsFile(goodFile);
+            }
+        },
+        timeoutMs: 30_000,
+    },
+
+    {
+        id: 'wa-sqlite-vector-search',
+        name: 'wa-sqlite: vector extension (full_scan + TurboQuant quantize_scan)',
+        async fn(ctx) {
+            // Confirms the rh vector extension works in the real browser build
+            // (auto-registered via sqlite3_auto_extension) against an
+            // OPFS-backed connection — vitest only exercises :memory:.
+            const filename = uniqueFilename('test-vector');
+            const factory = getFactory();
+            const DIM = 8;
+            const N = 30;
+            // Deterministic vectors; no Math.random in the testbed.
+            const vec = (seed: number): number[] => {
+                const out: number[] = [];
+                let s = (seed * 2654435761) >>> 0;
+                for (let i = 0; i < DIM; i++) {
+                    s = (1103515245 * s + 12345) >>> 0;
+                    out.push((s / 0xffffffff) * 2 - 1);
+                }
+                return out;
+            };
+            let db: Comlink.Remote<WaSqliteDb> | null = null;
+            try {
+                db = await factory.createDb();
+                await db.init({ filename });
+                ctx.expect.equal(
+                    await scalarValue(db, 'vector_version()'),
+                    '0.1.0',
+                    'extension registered',
+                );
+                await db.execRaw('CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)');
+                for (let i = 0; i < N; i++) {
+                    await db.execRaw(
+                        `INSERT INTO docs(id, emb) VALUES (${i + 1},` +
+                            ` vector_as_f32('${JSON.stringify(vec(i + 1))}'))`,
+                    );
+                }
+                await db.execRaw(
+                    `SELECT vector_init('docs','emb','dimension=${DIM}, distance=cosine')`,
+                );
+
+                // Exact scan: querying a stored vector returns it at ~0 distance.
+                const q = JSON.stringify(vec(7));
+                const exact = await db.execQuery(
+                    `SELECT rowid AS rid, distance FROM vector_full_scan('docs','emb',` +
+                        ` vector_as_f32('${q}'), 1)`,
+                );
+                ctx.expect.equal(
+                    Number((exact.rows[0] as { rid: number }).rid),
+                    7,
+                    'nearest is row 7',
+                );
+                ctx.expect.truthy(
+                    Math.abs(Number((exact.rows[0] as { distance: number }).distance)) < 1e-4,
+                    'exact-match distance ~ 0',
+                );
+
+                // TurboQuant: quantize, then approximate scan returns k rows.
+                const nq = await scalarValue(
+                    db,
+                    `vector_quantize('docs','emb','qtype=turbo,qbits=4')`,
+                );
+                ctx.expect.equal(Number(nq), N, 'quantized all rows');
+                const approx = await db.execQuery(
+                    `SELECT rowid AS rid FROM vector_quantize_scan('docs','emb',` +
+                        ` vector_as_f32('${q}'), 5) ORDER BY distance`,
+                );
+                ctx.expect.equal(approx.rows.length, 5, 'quantize_scan returns k=5 rows');
+                ctx.expect.truthy(
+                    approx.rows.some((r) => Number((r as { rid: number }).rid) === 7),
+                    'quantize_scan recovers the exact match among the top 5',
+                );
+                await db.close();
+            } finally {
+                await safeRemoveOpfsFile(filename);
             }
         },
         timeoutMs: 30_000,

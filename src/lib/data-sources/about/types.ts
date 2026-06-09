@@ -2,7 +2,7 @@
  * Static metadata for each pre-built demo dataset. Read by the Demo
  * Dialog to render the "About this dataset" panel and by the demo-source
  * factory to know which file to download and how to label table-meta
- * rows. The actual data lives in `/public/demo/<id>.sqlite`, built by
+ * rows. The actual data lives in `src/assets/demo/<id>.sqlite`, built by
  * `make demo-data` from the submodules under contrib/.
  */
 export type DemoSpec =
