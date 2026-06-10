@@ -38,8 +38,17 @@ static const char RH_BGE_QUERY_PREFIX[] =
 */
 __attribute__((used, visibility("default")))
 int analyst_embed_query(const char *zText, int nText, float *aOut, int nDim) {
-    if (sem_kind() != SEM_KIND_EMBED || sem_dim() <= 0) return 1; /* not warmed */
-    if (sem_dim() != nDim) return 2;                              /* dim mismatch */
+    int kind = sem_kind();
+    if ((kind != SEM_KIND_EMBED && kind != SEM_KIND_STATIC) || sem_dim() <= 0)
+        return 1;                     /* not warmed */
+    if (sem_dim() != nDim) return 2;  /* dim mismatch */
+    if (kind == SEM_KIND_STATIC) {
+        /* Model2Vec is SYMMETRIC (bag-of-words static table): the query is embedded
+        ** RAW, exactly like stored passages — the BGE asymmetric instruction prefix
+        ** would just inject extra tokens into the mean and hurt recall. */
+        int rc = sem_embed(zText, nText, aOut);
+        return rc == SEM_OK ? 0 : 3;
+    }
     char *z = sqlite3_mprintf("%s%.*s", RH_BGE_QUERY_PREFIX, nText, zText);
     if (!z) return 3;
     int rc = sem_embed(z, -1, aOut); /* len<0 => strlen; writes sem_dim() floats */

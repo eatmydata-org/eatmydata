@@ -110,6 +110,7 @@ static void free_model(sem_model *m) {
     free(m->layers);
   }
   free_qmat(&m->cls_w); free(m->cls_b);
+  free(m->m2v_emb);
   memset(m, 0, sizeof(*m));
 }
 
@@ -204,6 +205,30 @@ int sem_init(const uint8_t *gguf, int len) {
   gguf_str arch;
   if (!gguf_get_str(&ctx, "general.architecture", &arch) || !gguf_str_eq(arch, "bert")) {
     rc = SEM_ERR_ARCH; goto done;
+  }
+
+  /* Model2Vec static embedder: a [vocab][dim] table + the WordPiece vocab, NO BERT
+  ** layers. Detected by semantic.kind="model2vec"; loads the table and returns. */
+  gguf_str kindstr;
+  if (gguf_get_str(&ctx, "semantic.kind", &kindstr) && gguf_str_eq(kindstr, "model2vec")) {
+    uint32_t u;
+    if (!gguf_get_u32(&ctx, "model2vec.dim", &u)) { rc = SEM_ERR_ARCH; goto done; }
+    m->d_model = (int)u;
+    if (m->d_model < 4 || m->d_model > 4096) { rc = SEM_ERR_ARCH; goto done; }
+    m->m2v_median_tok = gguf_get_u32(&ctx, "model2vec.median_token_length", &u) ? (int)u : 6;
+    m->n_ctx = SEM_MAX_CTX;
+    m->kind = SEM_KIND_STATIC;
+    const gguf_kv *toks0 = gguf_find(&ctx, "tokenizer.ggml.tokens");
+    if (!toks0 || toks0->type != GGUF_T_ARRAY || toks0->arr_type != GGUF_T_STRING) {
+      rc = SEM_ERR_ARCH; goto done;
+    }
+    m->vocab_size = (int)toks0->arr_len;
+    m->m2v_emb = load_tensor(&ctx, "m2v.embeddings", (uint64_t)m->vocab_size * m->d_model);
+    if (!m->m2v_emb) { rc = SEM_ERR_TENSOR; goto done; }
+    rc = build_vocab(&ctx, &g.vocab, m->vocab_size);
+    if (rc != SEM_OK) goto done;
+    g.ready = 1;
+    goto done;
   }
 
   /* ---- runtime geometry from metadata ---- */
@@ -319,14 +344,33 @@ int sem_num_labels(void) { return g.ready ? g.model.num_labels : 0; }
 
 int sem_embed(const char *text, int len, float *out) {
   if (!g.ready) return SEM_ERR_NOT_INIT;
-  if (g.model.kind != SEM_KIND_EMBED) return SEM_ERR_KIND;
+  if (g.model.kind != SEM_KIND_EMBED && g.model.kind != SEM_KIND_STATIC) return SEM_ERR_KIND;
   if (!text || !out) return SEM_ERR_INPUT;
+
+  int eff = len < 0 ? (int)strlen(text) : len;
+  /* STATIC: model2vec truncates the input to max_length(512)*median_token_length
+  ** chars before tokenizing. Replicate (back off to a UTF-8 boundary so we never
+  ** cut mid-codepoint). EMBED keeps the full text (sem_tokenize caps at n_ctx). */
+  if (g.model.kind == SEM_KIND_STATIC && g.model.m2v_median_tok > 0) {
+    int cap = 512 * g.model.m2v_median_tok;
+    if (eff > cap) {
+      eff = cap;
+      while (eff > 0 && ((unsigned char)text[eff] & 0xC0) == 0x80) eff--;
+    }
+  }
+
   int32_t *ids = NULL;
   int n = 0;
-  int rc = sem_tokenize(&g.vocab, text, len, g.model.n_ctx, &ids, NULL, NULL, &n);
+  int rc = sem_tokenize(&g.vocab, text, eff, g.model.n_ctx, &ids, NULL, NULL, &n);
   if (rc != SEM_OK) return rc;
   if (n <= 0) { free(ids); return SEM_ERR_TOKENIZE; }
-  rc = sem_forward_embed(&g.model, ids, n, out);
+  if (g.model.kind == SEM_KIND_STATIC) {
+    /* content subwords only: drop [CLS] (ids[0]) and [SEP] (ids[n-1]) to match
+    ** model2vec's add_special_tokens=False. */
+    rc = sem_forward_static(&g.model, ids + 1, n - 2 > 0 ? n - 2 : 0, out);
+  } else {
+    rc = sem_forward_embed(&g.model, ids, n, out);
+  }
   free(ids);
   return rc;
 }
@@ -374,6 +418,48 @@ int sem_ner_infer(const char *text, int len, int32_t *out, int max_tokens) {
 }
 
 const sem_vocab *sem_debug_vocab(void) { return g.ready ? &g.vocab : NULL; }
+
+/*
+** Debug / testbed ONLY (not part of the public ABI). Simulate low-bit weight
+** quantization by round-tripping every matmul weight (the per-layer qmats)
+** through symmetric per-output-row int-`bits` quant and back to f32, in place.
+** Lets the /tests ranking-tolerance probe measure how far bge-small weights can
+** be quantized before *retrieval ranking* degrades — gating the LUT-GEMM
+** direction — WITHOUT writing a low-bit kernel. `bits` ≤ 1 or ≥ 16 is a no-op.
+** Destructive: re-run sem_init to restore pristine f32 weights.
+*/
+int sem_debug_requantize(int bits) {
+  if (!g.ready) return SEM_ERR_NOT_INIT;
+  if (bits <= 1 || bits >= 16) return SEM_OK;
+  sem_model *m = &g.model;
+  const float qmax = (float)((1 << (bits - 1)) - 1); /* bits=4 -> 7, bits=2 -> 1 */
+  for (int l = 0; l < m->n_layers; l++) {
+    sem_layer *L = &m->layers[l];
+    qmat *mats[6] = { &L->attn_q_w, &L->attn_k_w, &L->attn_v_w,
+                      &L->attn_o_w, &L->ffn_up_w, &L->ffn_down_w };
+    for (int mi = 0; mi < 6; mi++) {
+      qmat *q = mats[mi];
+      for (int r = 0; r < q->n_out; r++) {
+        float *row = q->f32 + (size_t)r * q->n_in;
+        float amax = 0.0f;
+        for (int i = 0; i < q->n_in; i++) {
+          float a = row[i] < 0 ? -row[i] : row[i];
+          if (a > amax) amax = a;
+        }
+        if (amax == 0.0f) continue;
+        const float scale = amax / qmax, inv = qmax / amax;
+        for (int i = 0; i < q->n_in; i++) {
+          float v = row[i] * inv;
+          int qi = (int)(v < 0 ? v - 0.5f : v + 0.5f);
+          if (qi > (int)qmax) qi = (int)qmax;
+          else if (qi < -(int)qmax) qi = -(int)qmax;
+          row[i] = (float)qi * scale;
+        }
+      }
+    }
+  }
+  return SEM_OK;
+}
 
 const char *sem_strerror(int rc) {
   switch (rc) {

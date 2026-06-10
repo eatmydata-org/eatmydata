@@ -126,6 +126,22 @@ ner-model:
 	wasm/transformers/.venv/bin/python wasm/semantic/tools/convert-ner-gguf.py \
 	  --outtype q8_0 --outfile src/assets/models/bert-small-pii-detection-q8_0.gguf
 
+# Distill a Model2Vec STATIC embedder from a BGE teacher into a GGUF the semantic
+# engine reads (SEM_KIND_STATIC: token-table gather+mean, ~3500x faster than the
+# BERT path; see wasm/semantic/PERF.md). SRC/DIM are parameters — the teacher size
+# is free at runtime (the artifact is a [vocab x DIM] table), and Phase-0 found
+# bge-base/DIM=256 the sweet spot. The matrix is reindexed into the bge GGUF's id
+# order so the runtime reuses sem_tokenize unchanged. Needs the bge GGUF (make
+# embed-model) + model2vec in the transformers venv. Output gitignored.
+M2V_SRC ?= BAAI/bge-base-en-v1.5
+M2V_DIM ?= 256
+m2v-model:
+	wasm/transformers/.venv/bin/python -m pip install --quiet "model2vec[distill]" scikit-learn
+	wasm/transformers/.venv/bin/python wasm/semantic/tools/convert-m2v-gguf.py \
+	  --source $(M2V_SRC) --pca-dims $(M2V_DIM) \
+	  --bge-gguf src/assets/models/bge-small-en-v1.5-q8_0.gguf \
+	  --outfile src/assets/models/bge-m2v-d$(M2V_DIM).gguf
+
 # Native verification gate: compile the SAME C sources natively (system cc, like
 # vector-leakcheck), then compare embeddings (cosine) + token ids against
 # llama.cpp on a fixed corpus + an NER smoke. Builds the llama.cpp oracle tools on

@@ -76,6 +76,42 @@ static inline float geluf_erf(float x) {
   return 0.5f * x * (1.0f + erff(x * SQRT_1_2));
 }
 
+/*
+** Single-precision exp for the attention softmax. Range-reduce x = m·ln2 + r
+** (Cody–Waite two-step), evaluate a degree-5 minimax poly for exp(r), then scale
+** by 2^m via the IEEE exponent field. Scalar (`fmaf`) and SIMD (`exp4`,
+** `relaxed_madd`) forms share the SAME op order so wasm == native bit-for-bit.
+** Coefficients are the standard cephes/Eigen single-precision `pexp` set (same
+** published lineage as the tanh-GELU minimax above; provenance note in PERF.md).
+** Softmax inputs are ≤ 0 (att-mx), but the full ±88 range is handled anyway.
+*/
+#define EXP_HI     88.3762626647950f
+#define EXP_LO    (-88.3762626647949f)
+#define EXP_LOG2EF 1.44269504088896341f
+#define EXP_C1     0.693359375f
+#define EXP_C2    (-2.12194440e-4f)
+#define EXP_P0     1.9875691500e-4f
+#define EXP_P1     1.3981999507e-3f
+#define EXP_P2     8.3334519073e-3f
+#define EXP_P3     4.1665795894e-2f
+#define EXP_P4     1.6666665459e-1f
+#define EXP_P5     5.0000001201e-1f
+
+static inline float expf_approx(float x) {
+  x = x > EXP_HI ? EXP_HI : (x < EXP_LO ? EXP_LO : x);
+  float m = floorf(fmaf(x, EXP_LOG2EF, 0.5f));
+  x = fmaf(m, -EXP_C1, x); /* x - m*C1 (high) */
+  x = fmaf(m, -EXP_C2, x); /* x - m*C2 (low)  */
+  float z = x * x;
+  float y = EXP_P0;
+  y = fmaf(y, x, EXP_P1); y = fmaf(y, x, EXP_P2); y = fmaf(y, x, EXP_P3);
+  y = fmaf(y, x, EXP_P4); y = fmaf(y, x, EXP_P5);
+  y = fmaf(y, z, x) + 1.0f; /* y*x^2 + x + 1 */
+  union { int32_t i; float f; } pw;
+  pw.i = ((int32_t)m + 127) << 23; /* 2^m via exponent field */
+  return y * pw.f;
+}
+
 #ifdef __wasm_simd128__
 static inline v128_t rtanh4(v128_t x) {
   x = wasm_f32x4_max(wasm_f32x4_const_splat(-9.0f), wasm_f32x4_min(wasm_f32x4_const_splat(9.0f), x));
@@ -102,6 +138,26 @@ static inline v128_t gelu4(v128_t x) {
                                                       wasm_f32x4_const_splat(1.0f)));
   return wasm_f32x4_mul(wasm_f32x4_mul(wasm_f32x4_const_splat(0.5f), x),
                         wasm_f32x4_add(wasm_f32x4_const_splat(1.0f), rtanh4(arg)));
+}
+/* exp on four f32 at once — bit-identical, lane-for-lane, to expf_approx(). */
+static inline v128_t exp4(v128_t x) {
+  x = wasm_f32x4_max(wasm_f32x4_const_splat(EXP_LO),
+                     wasm_f32x4_min(wasm_f32x4_const_splat(EXP_HI), x));
+  v128_t m = wasm_f32x4_floor(
+      wasm_f32x4_relaxed_madd(x, wasm_f32x4_const_splat(EXP_LOG2EF), wasm_f32x4_const_splat(0.5f)));
+  x = wasm_f32x4_relaxed_madd(m, wasm_f32x4_const_splat(-EXP_C1), x);
+  x = wasm_f32x4_relaxed_madd(m, wasm_f32x4_const_splat(-EXP_C2), x);
+  v128_t z = wasm_f32x4_mul(x, x);
+  v128_t y = wasm_f32x4_const_splat(EXP_P0);
+  y = wasm_f32x4_relaxed_madd(y, x, wasm_f32x4_const_splat(EXP_P1));
+  y = wasm_f32x4_relaxed_madd(y, x, wasm_f32x4_const_splat(EXP_P2));
+  y = wasm_f32x4_relaxed_madd(y, x, wasm_f32x4_const_splat(EXP_P3));
+  y = wasm_f32x4_relaxed_madd(y, x, wasm_f32x4_const_splat(EXP_P4));
+  y = wasm_f32x4_relaxed_madd(y, x, wasm_f32x4_const_splat(EXP_P5));
+  y = wasm_f32x4_add(wasm_f32x4_relaxed_madd(y, z, x), wasm_f32x4_const_splat(1.0f));
+  /* 2^m via the IEEE exponent field: ((int)m + 127) << 23, reinterpreted f32. */
+  v128_t n = wasm_i32x4_add(wasm_i32x4_trunc_sat_f32x4(m), wasm_i32x4_splat(127));
+  return wasm_f32x4_mul(y, wasm_i32x4_shl(n, 23));
 }
 #endif
 
@@ -316,14 +372,60 @@ static int encode(const sem_model *m, const int32_t *ids, int T, float **out_x) 
       int off = h * dh;
       for (int t = 0; t < T; t++) {
         const float *qt = q + (size_t)t * D + off;
-        float mx = -INFINITY;
-        for (int u = 0; u < T; u++) {
-          float s = dotf(qt, k + (size_t)u * D + off, dh) * scale;
-          att[u] = s;
-          if (s > mx) mx = s;
+        /* attention scores att[u] = scale·(q_t·k_u over head_dim). Done one-at-a-
+        ** time the dot is a single-accumulator dotf — FMA-latency-bound (no ILP),
+        ** and at O(T²) it dominates long-doc attention. Key-block ×8: 8 independent
+        ** v128 accumulators feed the FMA pipeline (8-way ILP) with q_t reused across
+        ** the block. Each att[u] hsums in dotf's exact lane order, so the value is
+        ** bit-identical to the per-u dotf — and to the native scalar path below. */
+#ifdef __wasm_simd128__
+        {
+          const v128_t Z = wasm_f32x4_const_splat(0.0f);
+          int u = 0;
+          for (; u + 8 <= T; u += 8) {
+            const float *k0 = k + (size_t)(u + 0) * D + off, *k1 = k + (size_t)(u + 1) * D + off;
+            const float *k2 = k + (size_t)(u + 2) * D + off, *k3 = k + (size_t)(u + 3) * D + off;
+            const float *k4 = k + (size_t)(u + 4) * D + off, *k5 = k + (size_t)(u + 5) * D + off;
+            const float *k6 = k + (size_t)(u + 6) * D + off, *k7 = k + (size_t)(u + 7) * D + off;
+            v128_t a0 = Z, a1 = Z, a2 = Z, a3 = Z, a4 = Z, a5 = Z, a6 = Z, a7 = Z;
+            for (int c = 0; c < dh; c += 4) {
+              v128_t qv = wasm_v128_load(qt + c);
+              a0 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k0 + c), a0);
+              a1 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k1 + c), a1);
+              a2 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k2 + c), a2);
+              a3 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k3 + c), a3);
+              a4 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k4 + c), a4);
+              a5 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k5 + c), a5);
+              a6 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k6 + c), a6);
+              a7 = wasm_f32x4_relaxed_madd(qv, wasm_v128_load(k7 + c), a7);
+            }
+            att[u + 0] = hsum4(a0) * scale; att[u + 1] = hsum4(a1) * scale;
+            att[u + 2] = hsum4(a2) * scale; att[u + 3] = hsum4(a3) * scale;
+            att[u + 4] = hsum4(a4) * scale; att[u + 5] = hsum4(a5) * scale;
+            att[u + 6] = hsum4(a6) * scale; att[u + 7] = hsum4(a7) * scale;
+          }
+          for (; u < T; u++) att[u] = dotf(qt, k + (size_t)u * D + off, dh) * scale;
         }
+#else
+        for (int u = 0; u < T; u++)
+          att[u] = dotf(qt, k + (size_t)u * D + off, dh) * scale;
+#endif
+        /* max over the scores (numerically-stable softmax shift) */
+        float mx = -INFINITY;
+        for (int u = 0; u < T; u++) if (att[u] > mx) mx = att[u];
+        /* softmax: att[u] = exp(att[u]-mx) (vectorized 4-wide on wasm; the scalar
+        ** tail + native path use the lane-identical expf_approx), then a
+        ** scalar-sequential normalization sum — same add order both builds, so
+        ** wasm == native bit-for-bit (the embedding gate). */
+        int u = 0;
+#ifdef __wasm_simd128__
+        v128_t vmx = wasm_f32x4_splat(mx);
+        for (; u + 4 <= T; u += 4)
+          wasm_v128_store(att + u, exp4(wasm_f32x4_sub(wasm_v128_load(att + u), vmx)));
+#endif
+        for (; u < T; u++) att[u] = expf_approx(att[u] - mx);
         float sum = 0.0f;
-        for (int u = 0; u < T; u++) { float e = expf(att[u] - mx); att[u] = e; sum += e; }
+        for (u = 0; u < T; u++) sum += att[u];
         float inv = 1.0f / sum;
         float *ct = ctx + (size_t)t * D + off;
         /* context = (Σ_u att[u]·v_u) · inv, accumulated per output channel over u
@@ -431,5 +533,55 @@ int sem_forward_tokencls(const sem_model *m, const int32_t *ids, int T,
 
   free(logits);
   free(x);
+  return SEM_OK;
+}
+
+/*
+** numpy's pairwise summation of x[i]*x[i] (i=0..n-1), reproducing np.sum order so
+** the Model2Vec norm bit-matches np.linalg.norm. Base case ≤128 uses 8 lane
+** accumulators (numpy's NPY_PW_BLOCKSIZE=128 unrolled-by-8 block); above that it
+** splits in half rounded down to a multiple of 8 and recurses. Scalar (no SIMD) so
+** wasm == native bit-for-bit. Each square is rounded to f32 exactly like (x*x).
+*/
+static float pw_sumsq(const float *x, int n) {
+  if (n < 8) {
+    float s = 0.0f;
+    for (int i = 0; i < n; i++) s += x[i] * x[i];
+    return s;
+  }
+  if (n <= 128) {
+    float r0 = x[0] * x[0], r1 = x[1] * x[1], r2 = x[2] * x[2], r3 = x[3] * x[3];
+    float r4 = x[4] * x[4], r5 = x[5] * x[5], r6 = x[6] * x[6], r7 = x[7] * x[7];
+    int i = 8;
+    for (; i + 8 <= n; i += 8) {
+      r0 += x[i + 0] * x[i + 0]; r1 += x[i + 1] * x[i + 1];
+      r2 += x[i + 2] * x[i + 2]; r3 += x[i + 3] * x[i + 3];
+      r4 += x[i + 4] * x[i + 4]; r5 += x[i + 5] * x[i + 5];
+      r6 += x[i + 6] * x[i + 6]; r7 += x[i + 7] * x[i + 7];
+    }
+    float s = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7));
+    for (; i < n; i++) s += x[i] * x[i];
+    return s;
+  }
+  int n2 = n / 2;
+  n2 -= n2 % 8;
+  return pw_sumsq(x, n2) + pw_sumsq(x + n2, n - n2);
+}
+
+int sem_forward_static(const sem_model *m, const int32_t *ids, int n, float *out) {
+  const int D = m->d_model;
+  for (int j = 0; j < D; j++) out[j] = 0.0f;
+  if (n <= 0) return SEM_OK; /* empty -> zero vector (matches model2vec) */
+  /* sequential f32 mean over the content token rows == numpy mean(axis=0) */
+  for (int i = 0; i < n; i++) {
+    const float *row = m->m2v_emb + (size_t)ids[i] * D;
+    for (int j = 0; j < D; j++) out[j] += row[j];
+  }
+  const float k = (float)n;
+  for (int j = 0; j < D; j++) out[j] = out[j] / k;
+  /* L2 normalize with numpy-pairwise sum-of-squares (+1e-32, as model2vec) */
+  float norm = sqrtf(pw_sumsq(out, D));
+  float denom = norm + 1e-32f;
+  for (int j = 0; j < D; j++) out[j] = out[j] / denom;
   return SEM_OK;
 }

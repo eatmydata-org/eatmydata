@@ -67,6 +67,12 @@ typedef struct {
   /* token-classification head (kind == SEM_KIND_TOKEN_CLS only) */
   qmat   cls_w;       /* [num_labels][D] */
   float *cls_b;       /* [num_labels]    */
+
+  /* Model2Vec static head (kind == SEM_KIND_STATIC only): a [vocab][D] table the
+  ** encoder gathers + mean-pools (no BERT layers loaded). m2v_median_tok feeds the
+  ** char-truncation that matches model2vec's tokenize(). */
+  float *m2v_emb;     /* [vocab][D] static token embeddings (f32) */
+  int    m2v_median_tok;
 } sem_model;
 
 /* WordPiece vocabulary. Token strings are copied out of the GGUF into `arena`
@@ -110,6 +116,10 @@ int  sem_forward_embed(const sem_model *m, const int32_t *ids, int n, float *out
 ** argmax label id and its softmax probability (n entries, incl CLS/SEP). */
 int  sem_forward_tokencls(const sem_model *m, const int32_t *ids, int n,
                           int32_t *out_label, float *out_score);
+/* STATIC (Model2Vec): gather the token table over `n` CONTENT ids (no CLS/SEP),
+** sequential-f32 mean, L2-normalize into out[d_model]. Bit-matches model2vec
+** sm.encode (f32): seq-f32 mean == numpy mean(axis=0); norm == numpy pairwise. */
+int  sem_forward_static(const sem_model *m, const int32_t *ids, int n, float *out);
 
 /* Debug-only (native test harness): the live vocab after a successful sem_init,
 ** so the CLI can dump token ids for the tokenizer-vs-llama.cpp check. NULL if

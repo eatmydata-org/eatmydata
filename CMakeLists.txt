@@ -430,6 +430,9 @@ add_custom_command(
         -Wl,--export=sem_dim
         -Wl,--export=sem_num_labels
         -Wl,--export=sem_strerror
+        # Debug/testbed only: low-bit weight requantize hook for the /tests
+        # ranking-tolerance probe (gates the LUT-GEMM direction). See semantic.c.
+        -Wl,--export=sem_debug_requantize
         -Wl,--export=__heap_base
         -Wl,--initial-memory=16777216
         # ~132 MB of f32 weights resident + the staged GGUF buffer during load.

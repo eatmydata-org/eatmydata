@@ -29,7 +29,5 @@ size=$(du -h "$OUT" | cut -f1)
 tables=$(sqlite3 "$OUT" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
 echo "[adventureworks] wrote $OUT ($size, $tables tables)"
 
-# Prebuild the semantic-search indexes (best-effort; needs `make transformers`).
-# Non-fatal so a missing model / vector hiccup never aborts `make demo-data`.
-pnpm exec tsx --tsconfig "$ROOT/tsconfig.node.json" "$ROOT/scripts/build-demo-index.ts" "$OUT" \
-    || echo "[adventureworks] semantic index step failed; shipping unindexed"
+# Semantic-search indexes are NOT prebuilt — the browser builds them at import
+# time (autoIndexAfterImport), cheap with the Model2Vec static embedder.

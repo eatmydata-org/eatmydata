@@ -1,9 +1,10 @@
 /**
  * Semantic-index CORE — the engine-only half of the index builder, with NO
  * browser-only imports (no SharedWorker transformers client, no Solid status
- * store, no settings/`@app-config`). It therefore loads under plain Node, so
- * the demo-data build scripts can PREBUILD the same `_rhvec_*` artifacts the
- * browser would otherwise build online (see scripts/lib/semantic-index-node.ts).
+ * store, no settings/`@app-config`). It loads under plain Node, keeping the
+ * embedder/dim/model choice (`SEMANTIC_EMBEDDER`) and the storage contract in one
+ * dependency-light leaf. Indexes are built at import/seed time in the browser —
+ * NOT prebuilt into the shipped demo files.
  *
  * The browser orchestration (SharedWorker embedder, status reporting, retries,
  * settings gate) lives in `./semantic-index.ts`, which re-exports these.
@@ -25,9 +26,25 @@
 import type { TableSchema } from '@/lib/wa-sqlite/types';
 import { isLowCardinality } from './low-cardinality';
 
-/** BAAI/bge-small-en-v1.5 output dimensionality. */
-export const EMBED_DIM = 384;
-export const EMBED_MODEL = 'bge-small-en-v1.5';
+/**
+ * Compile-time semantic-search embedder (full switch, no UI toggle). 'model2vec'
+ * = the fast static token-table embedder (default; ~3500× faster indexing than the
+ * BERT encoder, see wasm/semantic/PERF.md), 'bge' = the bge-small BERT encoder.
+ * This single constant drives the GGUF the wa-sqlite sem engine loads
+ * (semantic-embed.ts), the index dimensionality, and the stored model name. Both
+ * query and passage embedding run through the same model, so the spaces match.
+ * Flip to 'bge' to revert. Query/passage are SYMMETRIC for model2vec (no BGE
+ * instruction prefix — handled in runtime_shim.c by model kind).
+ */
+export const SEMANTIC_EMBEDDER: 'model2vec' | 'bge' = 'model2vec';
+
+/** GGUF filename under src/assets/models/ for the active embedder. */
+export const EMBED_GGUF_FILE =
+    SEMANTIC_EMBEDDER === 'model2vec' ? 'bge-m2v-d256.gguf' : 'bge-small-en-v1.5-q8_0.gguf';
+/** Output dimensionality (must equal the wasm sem_dim() of the active embedder). */
+export const EMBED_DIM = SEMANTIC_EMBEDDER === 'model2vec' ? 256 : 384;
+export const EMBED_MODEL =
+    SEMANTIC_EMBEDDER === 'model2vec' ? 'bge-base-m2v-d256' : 'bge-small-en-v1.5';
 
 /**
  * Texts per embed() round-trip. In the browser embedding is single-thread-WASM
@@ -280,11 +297,17 @@ async function ensureSearchMapTable(db: IndexDb): Promise<void> {
 export async function isAlreadyIndexed(db: IndexDb, table: string, col: string): Promise<boolean> {
     try {
         const r = await db.execRaw(
-            `SELECT 1 FROM _rhvec_search_map WHERE base_tbl='${escSq(table)}'` +
+            `SELECT model FROM _rhvec_search_map WHERE base_tbl='${escSq(table)}'` +
                 ` AND base_col='${escSq(col)}' LIMIT 1`,
             1,
         );
-        return r.rows.length > 0;
+        if (r.rows.length === 0) return false;
+        // An index built by a DIFFERENT embedder (e.g. a pre-existing bge index
+        // after the SEMANTIC_EMBEDDER switch) has the wrong space + dimensionality,
+        // so the query path would dim-mismatch. Treat it as not-indexed → rebuild
+        // (buildColumnIndex drops the map row + sidecar up front, so it's idempotent).
+        const model = (r.rows[0] as { model?: string }).model;
+        return model === EMBED_MODEL;
     } catch {
         // No map table yet → nothing indexed.
         return false;

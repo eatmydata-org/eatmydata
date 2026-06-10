@@ -52,10 +52,11 @@ enum {
   SEM_ERR_KIND      = -8   /* wrong entry point for the loaded model kind */
 };
 
-/* Model kind, inferred from the GGUF tensors at load. */
+/* Model kind, inferred from the GGUF tensors/metadata at load. */
 enum {
-  SEM_KIND_EMBED     = 0,  /* CLS-pool + L2-normalize sentence embedding */
-  SEM_KIND_TOKEN_CLS = 1   /* per-token classification (NER) */
+  SEM_KIND_EMBED     = 0,  /* CLS-pool + L2-normalize sentence embedding (BERT) */
+  SEM_KIND_TOKEN_CLS = 1,  /* per-token classification (NER, BERT) */
+  SEM_KIND_STATIC    = 2   /* Model2Vec static embedding: token-table gather+mean */
 };
 
 /*
@@ -76,10 +77,11 @@ int sem_dim(void);
 int sem_num_labels(void);
 
 /*
-** EMBED only. Embed `text` (len bytes of UTF-8; len<0 => strlen). Writes
-** sem_dim() floats (L2-normalized CLS vector) to `out`. Text longer than the
-** model context (incl. [CLS]/[SEP]) is truncated. Returns SEM_OK or <0
-** (SEM_ERR_KIND if the loaded model is TOKEN_CLS).
+** EMBED or STATIC (Model2Vec). Embed `text` (len bytes of UTF-8; len<0 => strlen).
+** Writes sem_dim() L2-normalized floats to `out`. EMBED runs the BERT encoder +
+** CLS pool; STATIC gathers the Model2Vec token table over the content subwords and
+** mean-pools (no [CLS]/[SEP]). Text past the model context is truncated. Returns
+** SEM_OK or <0 (SEM_ERR_KIND if the loaded model is TOKEN_CLS).
 */
 int sem_embed(const char *text, int len, float *out);
 

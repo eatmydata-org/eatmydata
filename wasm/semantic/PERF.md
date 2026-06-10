@@ -10,7 +10,10 @@
 > ms/passage (26/s)** on Apple M4 Pro (V8, same in Node and Chrome) — **~22×**
 > overall — from **(A) batched matmul, (B) SIMD128 f32, (C) FMA, (D) a 4×4
 > register-blocked GEMM microkernel (16 accumulators), (E) vectorized rational-tanh
-> GELU, (F) vectorized attention context**, NOT from quantization. At ~38 ms it is
+> GELU, (F) vectorized attention context, (G) SIMD softmax exp, (H) key-blocked
+> Q·Kᵀ scores (8-way ILP)**, NOT from quantization. (G)+(H) are the long-doc
+> finishers — +1.04× typical / +1.12× long, see "SIMD softmax exp + key-blocked
+> scores" below; the matmul is now the wall on the f32 path. At ~38 ms it is
 > now **~1.6× faster than the bare-ORT single-thread baseline** — measured
 > head-to-head in the SAME warm `/tests` run (`bge-embed-engine`): bge **38.0** vs
 > **ORT-q8 62.4** (1.64×) ≈ **ORT-fp32 60.0** (1.58×) ms/passage. Long docs gained
@@ -282,13 +285,196 @@ native uses the c-outer `fmaf` fallback in the same per-channel u-order → bit-
 original).** Browser head-to-head **38.0 vs ORT-q8 62.4 = 1.64×**. Parity 1.19e-7,
 semantic-verify 21/21. (Scores already used SIMD `dotf`; softmax left scalar — see below.)
 
+## SIMD softmax exp + key-blocked scores (DONE — 2026-06)
+
+Two bit-exact attention levers, landed + measured together. Both target the
+**non-dominant** attention/softmax terms (see the corrected roofline below), so
+the wins are real but modest — the linear matmul is the wall.
+
+1. **SIMD softmax `exp`** ([model.c](src/model.c) `exp4` / `expf_approx`). The
+   per-(head,query) softmax called scalar libm `expf` over `att[u]-mx` — the last
+   scalar term in attention, O(layers·H·T²). Replaced with a degree-5 minimax
+   `exp` (cephes/Eigen `pexp` lineage; range-reduce `x=m·ln2+r`, poly for
+   `exp(r)`, scale by `2^m` via the IEEE exponent field). Vectorized 4-wide on
+   wasm (`relaxed_madd`), scalar `fmaf` natively in the SAME op order → wasm ==
+   native bit-for-bit. The normalization **sum stays scalar-sequential** (same add
+   order both builds), so only the `exp` itself is vectorized — no reduction-order
+   drift. Same published-coefficient provenance caveat as the tanh-GELU.
+2. **Key-blocked scores `Q·Kᵀ`** ([model.c](src/model.c)). The scores `att[u] =
+   scale·dot(q_t,k_u)` were computed one-`u`-at-a-time via the single-accumulator
+   `dotf` — **FMA-latency-bound, no ILP**, and O(T²). Key-block ×8: 8 independent
+   v128 accumulators feed the FMA pipeline (8-way ILP), `q_t` reused across the
+   block. Each `att[u]` hsums in `dotf`'s exact lane order, so the value is
+   **bit-identical** to the old per-`u` `dotf` (a pure-perf change, zero numerical
+   delta) and to the native scalar path (kept under `#else`).
+
+**Throughput** (Apple M4 Pro, Chrome 149 / V8 14.9, controlled same-session A/B —
+each build measured via CDP against the same warm page, best-of-3 medians of a
+full corpus sweep; baseline = the prior shipped kernel re-measured this session):
+
+| regime | baseline | + softmax exp | + scores ×8 | total |
+|---|---|---|---|---|
+| query (T≈11, prod sync) | 10.86 ms | 10.91 | 10.84 | **1.00×** (attention irrelevant at tiny T) |
+| typical (T≈32 passage) | 40.29 ms | 39.25 | 38.78 | **1.04×** |
+| long (T≈460 doc) | 367.0 ms | 345.1 | 328.9 | **1.12×** |
+
+**Correctness (the whole point):** `make semantic-verify` **22/22** (f16/f32 1:1 @
+0.9999, q8_0 @ 0.999, tokens exact, NER smoke). wasm↔native parity on a long
+softmax-heavy passage (q8_0) **max|Δ| = 5.0e-8, cosine = 1.0** — same envelope as
+the rest of the kernel, so the SIMD/scalar exp pair and the key-blocked scores are
+bit-equivalent on the target. In-browser: cosine vs the prior kernel **0.99999999**
+(softmax exp shifts the output ~1e-8; the scores block shifts it 0), ONNX agreement
+**0.989** (≥0.97). NER F1 vitest gate (det ≥0.78 / typed ≥0.72) **green** — the
+shared attention change flipped no PII argmax.
+
+**Methodology note (CDP browser bench).** Measured by importing the live
+[runtime.ts](../../src/lib/bge-embed/runtime.ts) from the Vite dev server into a
+dedicated tab over CDP (raw WebSocket to the user's Chrome — no Playwright), with
+`Network.setCacheDisabled` so each rebuild's `.wasm` is re-fetched (sidesteps the
+`warmupPromise`-memoization stale-kernel trap noted above). Heavy untimed warmup
+loop first → V8 TurboFan, then best-of-3 medians. Numbers reproduce PERF.md's
+prior absolutes (typical ~38–40, long ~367–370).
+
+> **Corrected roofline (this measurement overturned a prior assumption).** PERF.md
+> previously read long docs as *attention-dominated* (the stale Tier-0 fit, before
+> the context-vectorization landed). Re-measuring after vectorizing `exp` showed
+> only +6% — because the **linear matmul (Q/K/V/O/FFN), which scales with T,
+> dominates BOTH regimes**: at T≈460 it's ~21M MACs/token × 460 ≈ 9.8 GMAC ≈ 186 ms
+> of the 329, vs attention's T²·H·head_dim ≈ 2 GMAC (head_dim is only 32, 12 heads).
+> So even at long T the split is roughly **matmul ~57% / attention ~20% / softmax+
+> LN+tok ~23%**, and the matmul runs at the **16-accumulator FMA ceiling already**
+> (~105 GFLOP/s, 88% of the 120 microbench peak). ⇒ **The remaining single-thread
+> f32 levers are all ≤~5%** (they touch the non-dominant terms); the matmul wall
+> only moves with **FP16** (8-wide, runtime-blocked) or **fewer MACs**
+> (last-layer-CLS-only, ~4%, EMBED-only). The big throughput lever for *indexing*
+> is **data-parallel across N workers** (≈N×, single-thread per worker, no COI) —
+> out of this single-thread doc's scope but the real answer to "indexing is slow".
+
+## LUT-GEMM (T-MAC style) + precision ruler: investigated & dropped (2026-06)
+
+After the matmul was confirmed to be the wall on the f32 path, the obvious "past
+the wall" idea from recent literature is **T-MAC** (arXiv:2407.00088, up to 6.6×
+over llama.cpp on edge CPUs): low-bit `mpGEMM` as **table lookups** (no dequant, no
+multiplies), whose core primitive is a 16-entry SIMD byte-table lookup = WASM's
+`i8x16.swizzle`. Unlike the earlier int8 attempt (which fell back to widen+`i16x8_dot`
+≈ f32), the swizzle path is what makes T-MAC fast natively. Two browser probes
+(CDP, M4 / V8 14.9) settled it — **it does NOT transfer to WASM:**
+
+1. **Ceiling probe** (standalone microbench, `i8x16.swizzle` LUT loop vs the
+   `f32x4.relaxed_madd` 16-accumulator loop, both 16-way ILP, DCE-guarded):
+
+   | path | effective GMAC/s | vs f32 FMA |
+   |---|---|---|
+   | f32 FMA | 61.5 (123 GFLOP/s — matches the roofline ceiling) | 1.00× |
+   | LUT W4A8 | 44.8 | **0.73× (slower)** |
+   | LUT W2A8 | 89.6 | 1.46× |
+   | LUT W1A8 | 179.3 | 2.91× |
+
+   Root cause: V8 runs a **fixed ~15 G-SIMD-ops/s** regardless of op kind, and
+   `swizzle` is **not faster per-op** than `relaxed_madd` (it needs the
+   accompanying widen+accumulate). So LUT only wins when it resolves more MACs per
+   op than FMA's 4 MAC/op — which takes **int2 (1.46×) or int1 (2.9×)**; **int4
+   loses**. The native 6.6× comes from a dequant-heavy llama.cpp baseline + wider
+   native SIMD/`tbl` throughput — neither holds here (our f32 FMA baseline is
+   already op-throughput-optimal).
+
+2. **Precision ruler** (label-free: 10-theme × 6-paraphrase corpus, per-row int-`bits`
+   weight requantize via the debug `sem_debug_requantize` hook; `recall@5` of each
+   item's exact nearest neighbors + cosine-vs-exact — the metric that actually
+   matters for search):
+
+   | precision | mean cos vs exact | recall@5 vs exact | theme-purity |
+   |---|---|---|---|
+   | W8 | 0.9998 | 0.987 | 0.657 (≈ exact 0.650) |
+   | W4 | 0.954 | 0.857 | 0.657 |
+   | W3 | 0.791 | 0.653 | 0.597 |
+   | W2 | 0.525 | **0.200** | 0.167 |
+
+**Conclusion:** the two probes don't overlap. The only LUT regimes that beat f32
+(W2/W1) **destroy retrieval** (W2 recall 0.20, clustering gone); the only precision
+that preserves ranking (W4, recall 0.86) is **slower** than the f32 kernel (0.73×).
+Low-bit would need quantization-aware retraining (data + training infra — out of
+scope) to land both. ⇒ **The precision axis is exhausted** (int8 = shipped &
+lossless; int4 = no speed; int2 = broken). Tooling kept for re-checks on future
+toolchains/CPUs: the ceiling microbench and `sem_debug_requantize` /
+`debugRequantizeWeights` (the precision ruler).
+
+**Where that leaves "go faster" (single-thread):** with both the compute-scheduling
+axis (matmul at the FMA ceiling) and the precision axis (no fast+accurate low-bit)
+exhausted, real single-thread gains now require **fewer MACs**, not faster ones:
+- **Token merging (ToMe-style, training-free)** — merge redundant tokens across
+  layers → cut the dominant ∝T matmul. CLS-pooled embeddings tolerate it; tunable
+  `r`, gated by the recall ruler above. The strongest remaining *in-engine* lever.
+- **Low-rank FFN factorization** — cut the ∝D² term where the spectrum allows;
+  likely needs fine-tuning to hold quality (risk).
+- **Skip the transformer for indexing — Model2Vec** (github.com/MinishLab/model2vec):
+  static token embeddings (lookup + pool), ~500× faster on CPU, ~80–92% of MiniLM
+  MTEB, distilled offline in 30s. The extreme answer to "indexing is slow", at a
+  real quality cost; a *fast-index tier*, not a kernel change.
+- **Data-parallel across N workers** — ≈N×, orthogonal, the throughput lever.
+
+## Model2Vec static embedder — SHIPPED (the real answer to "indexing is slow", 2026-06)
+
+The single-thread BERT path bottomed out at ~38 ms/passage. Rather than chase the
+last few %, production semantic search **switched to a Model2Vec static embedder**
+distilled from BGE: tokenize → gather one static vector per token → mean → L2
+normalize. No transformer. **~88,000 embeds/sec in Chrome (~3,500× the BERT path)**;
+the engine cost ceases to be the indexing bottleneck.
+
+- **From-scratch, in-engine.** New `SEM_KIND_STATIC` in the same `semantic.wasm` /
+  `wa-sqlite.wasm`: `sem_static_embed` reuses `sem_tokenize` (WordPiece) + a
+  `[vocab × dim]` f32 table loaded from a GGUF. `sem_embed` auto-routes by model
+  kind, so the query path (`analyst_embed_query`) and index path (`embedTexts`)
+  both follow with no caller change. The `model2vec` Python lib is used OFFLINE
+  only, to produce the artifact (`make m2v-model SRC=… DIM=…` →
+  [tools/convert-m2v-gguf.py](tools/convert-m2v-gguf.py)); nothing of it ships.
+- **1:1 parity with Python model2vec** (the gate): mean = sequential-f32 sum/k
+  (bit-exact to numpy `mean(axis=0)`), norm = `sqrt(numpy-pairwise-sumsq)`. Native
+  sem-cli vs `sm.encode` over 406 real product names + unicode/case/punct edges:
+  **max|Δ| 8.9e-08, cosine 0.99999988, 0 mismatches**; wasm↔native **7.9e-08,
+  cosine 1.0**. The distilled matrix is reindexed into the bge GGUF's id order
+  (model2vec reorders/removes ids) so the runtime reuses the llama-verified
+  tokenizer unchanged; shipped **f32** (cleaner parity + better quality than
+  model2vec's f16 default), 30522×256 ≈ 31 MB.
+- **Quality** (Phase-0, real Contoso product→subcategory retrieval, 1489 rows /
+  32 labels): MAP@10 **0.976** vs full-bge **0.987** — ~1% off, and the bag-of-words
+  tradeoff is a near-ideal fit for short product/column text (where it shines).
+- **Teacher size is a dud here.** bge-{small,base,large} distill to essentially
+  the same static quality (0.974–0.977) — the full teachers are themselves tied on
+  this task (0.985–0.987), so there's no gap to transfer. Shipped **bge-base d256**;
+  bge-large wastes a 1.3 GB download for nothing. d256 ≈ d384.
+- **Selection is a compile-time constant** `SEMANTIC_EMBEDDER` in
+  [semantic-index-core.ts](../../src/lib/data-sources/semantic-index-core.ts)
+  (full switch, flip to `'bge'` to revert) — it drives the GGUF, `EMBED_DIM` (256),
+  and `EMBED_MODEL`. `isAlreadyIndexed` rebuilds any column whose stored model ≠
+  the active one, so a bge↔m2v switch self-heals stale indexes. Query is SYMMETRIC
+  for m2v (no BGE instruction prefix — gated by model kind in runtime_shim.c).
+- **Indexes are no longer prebuilt** into demo files; the browser builds them at
+  import/seed time (`autoIndexAfterImport`), now cheap.
+
+The bge BERT engine stays as the NER backbone, the standalone `/embeddings` + `/tests`
+bench surface, and the selectable `'bge'` high-accuracy embedder; everything below
+this line documents that engine.
+
 **Tier 1 — remaining (bit-exact, current toolchain):**
-1. **SIMD softmax `expf`** — the last scalar attention term (T² `expf` calls). Minor
-   at typical T but a large share of long-doc cost; a SIMD-exp would push the
-   T=434 number down further. Same approximation/provenance caveat as the GELU tanh.
-2. **Fuse Q/K/V** into one `[3D×D]` matmul — bigger N, one weight stream. **~1.05–1.15×.**
-3. **LayerNorm** — now only part of the ~14% LN+tok+GELU; vectorizing the
+1. **✅ DONE — SIMD softmax `exp`** (2026-06). See "SIMD softmax exp + key-blocked
+   scores" below. The last scalar attention term, vectorized; +6% on long docs.
+2. **✅ DONE (bonus) — key-blocked attention scores `Q·Kᵀ`** (2026-06, NOT originally
+   on this list — surfaced by measuring after #1). The per-`u` `dotf` was a
+   single-accumulator dot (FMA-latency-bound, no ILP); key-block ×8 gives 8-way ILP.
+   +5% on long docs. Same section below.
+3. **Fuse Q/K/V** into one `[3D×D]` matmul — bigger N, one weight stream. PERF.md
+   originally estimated ~1.05–1.15×, but the corrected roofline (matmul is
+   compute-bound at the FMA ceiling) says fusing changes **neither FLOPs nor
+   FLOP/s** — it only removes 2 `mm()` call setups (negligible). **Reclassified
+   ~1.0×; not worth the weight-concatenation-at-load complexity.**
+4. **LayerNorm** — now only part of the ~14% LN+tok+GELU; vectorizing the
    double-precision mean/var (f64x2) is fiddly for little gain. **Low priority.**
+5. **Last-layer CLS-only (EMBED)** — only `x[0]` survives CLS-pooling, so the final
+   layer needs Q/O/FFN for token 0 only (K/V stay full). Skips ~(T-1)/T of the last
+   layer's FFN+O-proj ≈ **~4% (1/n_layers of the dominant matmul)**, bit-exact,
+   EMBED-only. The only lever that touches the *dominant* matmul without FP16.
+   Not landed — modest, and branches a shared correctness-critical function.
 
 **DROPPED by the data:**
 - **Weight panel packing** — the kernel is at 93% of the 8-acc FMA ceiling (and ~88%

@@ -21,12 +21,20 @@
  * returns "not warmed" — exactly the behaviour the Node vector tests assert.
  */
 import { getWaSqlite } from './db';
+import { SEMANTIC_EMBEDDER } from '@/lib/data-sources/semantic-index-core';
 
 /**
- * Q8_0 (~33 MB, near-lossless) is the shipped default. Mirrors the bge-embed
- * standalone loader; the engine also accepts the F16/F32 GGUF if changed here.
+ * The GGUF loaded into the shared wa-sqlite sem engine — selected by the
+ * compile-time `SEMANTIC_EMBEDDER` constant (see semantic-index-core.ts). Both
+ * branches are static `new URL(...)` so Vite can resolve the asset. model2vec
+ * (~31 MB static table, SEM_KIND_STATIC) is the default; 'bge' is the bge-small
+ * Q8_0 BERT encoder. `sem_embed` auto-routes by the loaded model's kind, so the
+ * query path (analyst_embed_query) and the index path (embedTexts) both follow.
  */
-const EMBED_GGUF_URL = new URL('@/assets/models/bge-small-en-v1.5-q8_0.gguf', import.meta.url);
+const EMBED_GGUF_URL =
+    SEMANTIC_EMBEDDER === 'model2vec'
+        ? new URL('@/assets/models/bge-m2v-d256.gguf', import.meta.url)
+        : new URL('@/assets/models/bge-small-en-v1.5-q8_0.gguf', import.meta.url);
 
 /**
  * The auto-exposed (`_`-prefixed) wasm exports we need off the shared module

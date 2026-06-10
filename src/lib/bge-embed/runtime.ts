@@ -28,6 +28,8 @@ interface BgeExports {
     sem_embed: (textPtr: number, textLen: number, outPtr: number) => number;
     sem_dim: () => number;
     sem_strerror: (rc: number) => number; // -> C string ptr
+    /** Debug/testbed: round-trip every matmul weight through int-`bits` quant. */
+    sem_debug_requantize?: (bits: number) => number;
 }
 
 /** Source loaders, overridable for Node/vitest (no HTTP server, read from fs). */
@@ -178,6 +180,19 @@ export function embedTextsSync(texts: string | string[]): number[][] {
     } finally {
         exp.free(out);
     }
+}
+
+/**
+ * Testbed only: simulate low-bit weight quantization (symmetric per-row int-`bits`
+ * round-trip on every matmul weight). Used by the /tests ranking-tolerance probe
+ * to gate the LUT-GEMM direction. Destructive — call releaseBgeEmbed()+warmup to
+ * restore pristine f32. No-op if the wasm wasn't built with the debug export.
+ */
+export function debugRequantizeWeights(bits: number): void {
+    const exp = exports;
+    if (!exp) throw new Error('[bge-embed] debugRequantizeWeights() before warmup');
+    if (!exp.sem_debug_requantize) throw new Error('[bge-embed] sem_debug_requantize not exported');
+    exp.sem_debug_requantize(bits);
 }
 
 /** Drop the instance; `warmupBgeEmbed()` must be called again afterwards. */
