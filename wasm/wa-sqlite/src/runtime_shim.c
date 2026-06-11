@@ -22,10 +22,10 @@ static const char RH_BGE_QUERY_PREFIX[] =
 
 /*
 ** Embed a query phrase for the `vector_search` vtab. Defined HERE (not a JS env
-** import) because the BGE encoder is compiled straight into wa-sqlite.wasm —
-** the vtab's `xFilter` calls this synchronously and we run `sem_embed` in the
-** same module/memory, no JS hop. `zText` is the UTF-8 query (nText bytes);
-** `aOut` receives `nDim` float32 values.
+** import) because the semantic engine (BGE encoder + Model2Vec static embedder)
+** is compiled straight into wa-sqlite.wasm — the vtab's `xFilter` calls this
+** synchronously and we run `sem_embed` in the same module/memory, no JS hop.
+** `zText` is the UTF-8 query (nText bytes); `aOut` receives `nDim` float32 values.
 **
 ** Return codes match what vec-scan.c already handles:
 **   0  success (embedding written to aOut)

@@ -14,7 +14,9 @@ export const NORTHWIND: DemoAbout = {
     summary: "Microsoft's classic sample database — gourmet food trading.",
     description: `
 Northwind Traders is a fictional importer of specialty foods (cheeses,
-condiments, beverages, seafood) operating out of Seattle. The schema
+condiments, beverages, seafood) operating out of Seattle.
+
+The schema
 spans **customers**, **orders**, **order details**, **products**,
 **suppliers**, **shippers**, **employees**, **territories**, and a
 handful of helpful views like \`Sales by Category\` and
@@ -24,12 +26,6 @@ It's one of the most-cited demo databases in SQL teaching, so virtually
 any SQL pattern you want to test has an idiomatic Northwind example
 somewhere on the internet. Small dataset — ~16k orders, ~600k order
 lines — so most queries return instantly.
-
-The SQLite distribution comes from
-[jpwhite3/northwind-SQLite3](https://github.com/jpwhite3/northwind-SQLite3),
-which mirrors the upstream Microsoft sample. We pin a submodule at
-\`contrib/northwind-sqlite3/\` and copy \`dist/northwind.db\` straight
-through — no transformation.
 `.trim(),
     rowCountApprox: 626_000,
     fileSizeBytesApprox: 24_702_976,

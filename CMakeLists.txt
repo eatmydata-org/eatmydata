@@ -72,6 +72,10 @@ set(QJS_WASM_OUT ${CMAKE_SOURCE_DIR}/src/assets/wasm/qjs.wasm)
 
 add_custom_command(
     OUTPUT ${QJS_WASM_OUT}
+    # The output tree (src/assets/wasm/) is gitignored, so a fresh clone or a
+    # clean Docker build context won't have it — wasm-ld won't create the parent
+    # dir itself. Make it first.
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/src/assets/wasm
     COMMAND ${WASI_CLANG}
         --sysroot=${WASI_SYSROOT}
         --target=wasm32-wasip1
@@ -309,6 +313,7 @@ endforeach()
 
 add_custom_command(
     OUTPUT ${WASQL_WASM_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/src/assets/wasm
     COMMAND ${WASI_CLANG}
         --sysroot=${WASI_SYSROOT}
         --target=wasm32-wasip1
@@ -407,6 +412,7 @@ set(SEM_SOURCES
 
 add_custom_command(
     OUTPUT ${SEM_WASM_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/src/assets/wasm
     COMMAND ${WASI_CLANG}
         --sysroot=${WASI_SYSROOT}
         --target=wasm32-wasip1

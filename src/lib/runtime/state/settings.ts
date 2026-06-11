@@ -1,4 +1,3 @@
-import { openDB, type IDBPDatabase } from 'idb';
 import {
     defaultSettings,
     findModelEntryIn,
@@ -7,54 +6,46 @@ import {
     type Settings,
 } from './settings-types';
 import { publish } from './broadcast';
-import { STORAGE_VERSION } from '@/lib/storage';
+import { SETTINGS_KEY } from '@/lib/storage';
 
 /**
- * Tab-side settings store. Owns reads/writes to a dedicated IndexedDB
- * database and broadcasts patches to all connected tabs (including a
- * self-delivery to the writing tab via `publish`).
+ * Tab-side settings store. Persists to **localStorage** (synchronous) and
+ * broadcasts patches to all connected tabs (including a self-delivery to the
+ * writing tab via `publish`).
  *
- * Boot is async (IDB is async). Callers that need post-load state must
- * await `whenReady()` before reading `getSettings()`. The runtime host
- * awaits it before any handler that touches settings.
+ * localStorage (not IndexedDB) so the persisted settings are read SYNCHRONOUSLY
+ * at module init — the tab mirror seeds from the fully-merged settings on the
+ * first paint, with no async hydration flicker. Settings are main-thread only
+ * (no worker touches this module), so localStorage is safe here. Any existing
+ * IndexedDB settings are moved to localStorage once by the storage migration
+ * (migrations.ts), which runs before this module is imported.
  */
 
-const DB_NAME = `analyst-settings:v${STORAGE_VERSION}`;
-const DB_VERSION = 1;
-const STORE = 'kv';
-const KEY = 'settings';
-
-let dbPromise: Promise<IDBPDatabase> | null = null;
-
-function openSettingsDb(): Promise<IDBPDatabase> {
-    if (!dbPromise) {
-        dbPromise = openDB(DB_NAME, DB_VERSION, {
-            upgrade(db) {
-                if (!db.objectStoreNames.contains(STORE)) {
-                    db.createObjectStore(STORE);
-                }
-            },
-        });
+/** Read + merge persisted settings synchronously; `defaultSettings()` on miss. */
+function loadSettings(): Settings {
+    let raw: string | null = null;
+    try {
+        raw = localStorage.getItem(SETTINGS_KEY);
+    } catch (e) {
+        // Private browsing / disabled storage. Don't swallow — surface it.
+        console.error('[settings] read from localStorage failed:', e);
     }
-    return dbPromise;
+    if (!raw) return defaultSettings();
+    try {
+        return mergeWithDefaults(JSON.parse(raw) as Partial<Settings>);
+    } catch (e) {
+        console.error('[settings] stored settings are not valid JSON; using defaults:', e);
+        return defaultSettings();
+    }
 }
 
-let settings: Settings = defaultSettings();
+let settings: Settings = loadSettings();
 
-const ready: Promise<void> = (async () => {
-    const db = await openSettingsDb();
-    const stored = (await db.get(STORE, KEY)) as Partial<Settings> | undefined;
-    if (stored) settings = mergeWithDefaults(stored);
-})();
+// Settings load synchronously above, so there is nothing async to await. Kept
+// for API compatibility (the runtime host awaits it before settings handlers).
+const ready: Promise<void> = Promise.resolve();
 
-ready.catch((e) => {
-    // Loud failure: persistence is broken, the user will lose
-    // settings on the next refresh. Surface it in the console
-    // rather than letting them rediscover it by losing data.
-    console.error('[settings] initial load from IDB failed:', e);
-});
-
-/** Resolves once the initial load from IDB has settled. */
+/** Resolves once the initial load has settled (synchronous now → already done). */
 export function whenReady(): Promise<void> {
     return ready;
 }
@@ -65,12 +56,12 @@ export function getSettings(): Settings {
 
 export function patchSettings(patch: Partial<Settings>): void {
     // Callers may hand us Solid store proxies — the Settings UI maps over the
-    // live `providers` store to build a patch. Both `persist` (IDB `put`) and
-    // the broadcast self-delivery use `structuredClone`, which throws
-    // `DataCloneError` on a proxy: the patch would then neither save nor reach
-    // the tab mirror. Settings is fully JSON-serializable (it's what we
-    // persist), so a JSON round-trip losslessly normalizes the patch — and
-    // every value `mergeWithDefaults` carries forward — to a plain graph.
+    // live `providers` store to build a patch. Both `persist` and the broadcast
+    // self-delivery use `structuredClone`, which throws `DataCloneError` on a
+    // proxy: the patch would then neither save nor reach the tab mirror. Settings
+    // is fully JSON-serializable (it's what we persist), so a JSON round-trip
+    // losslessly normalizes the patch — and every value `mergeWithDefaults`
+    // carries forward — to a plain graph.
     const plain = JSON.parse(JSON.stringify(patch)) as Partial<Settings>;
     settings = mergeWithDefaults({ ...settings, ...plain });
     // `providers` is derived (the @app-config catalog + persisted keys), so a
@@ -82,30 +73,27 @@ export function patchSettings(patch: Partial<Settings>): void {
         ? { ...plain, apiKeys: settings.apiKeys, providers: settings.providers }
         : plain;
     publish({ kind: 'settings-patch', patch: broadcastPatch });
-    void persist(settings);
+    persist(settings);
 }
 
 export function resetSettings(): void {
     settings = defaultSettings();
     publish({ kind: 'settings-patch', patch: settings });
-    void persist(settings);
+    persist(settings);
 }
 
-async function persist(s: Settings): Promise<void> {
+function persist(s: Settings): void {
     try {
-        const db = await openSettingsDb();
-        // The provider/model catalog is build-time config (@app-config), never
-        // user state — persist everything EXCEPT the derived `providers`. Only
-        // `apiKeys` carries provider-related state into IDB; on load
-        // `mergeWithDefaults` rebuilds `providers` from the catalog + keys.
+        // The provider/model catalog is config (@app-config / runtime config),
+        // never user state — persist everything EXCEPT the derived `providers`.
+        // On load `mergeWithDefaults` rebuilds `providers` from the catalog + keys.
         const { providers: _omitProviders, ...persistable } = s;
         void _omitProviders;
-        await db.put(STORE, persistable, KEY);
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(persistable));
     } catch (e) {
         // Quota exceeded / private-browsing / disabled storage / etc.
-        // Don't swallow — settings will silently revert on refresh
-        // otherwise, which is exactly the bug this module just fixed.
-        console.error('[settings] persist to IDB failed:', e);
+        // Don't swallow — settings would silently revert on refresh otherwise.
+        console.error('[settings] persist to localStorage failed:', e);
     }
 }
 

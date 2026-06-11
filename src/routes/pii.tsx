@@ -322,7 +322,7 @@ const PiiPage: Component = () => {
                         class="px-2 py-0.5 rounded border bg-background hover:bg-muted/60 transition-colors whitespace-nowrap disabled:opacity-50"
                         onClick={() => void compareEngines()}
                         disabled={comparing() || !text().trim()}
-                        title="Run the ONNX model alongside the C engine (downloads the ONNX model on first use)"
+                        title="Run the ONNX model alongside the C engine. Requires the ONNX comparison assets — build them with `make onnx-models` (a.k.a. `make transformers`). Downloads the ONNX model on first use."
                     >
                         {comparing() ? 'comparing…' : '⚖ compare vs ONNX'}
                     </button>
@@ -335,8 +335,12 @@ const PiiPage: Component = () => {
                         )}
                     </Show>
                     <Show when={compareError()}>
-                        <span class="text-destructive whitespace-nowrap" title={compareError()!}>
-                            compare failed
+                        <span
+                            class="text-destructive whitespace-nowrap"
+                            title={`${compareError()!}\n\nIf the ONNX assets 404, build them with \`make onnx-models\`.`}
+                        >
+                            compare failed — build ONNX assets with{' '}
+                            <code class="font-mono">make onnx-models</code>
                         </span>
                     </Show>
                 </Show>

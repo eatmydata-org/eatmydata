@@ -3,6 +3,7 @@ import { render } from 'solid-js/web';
 import { lazy } from 'solid-js';
 import { Router, Route } from '@solidjs/router';
 import { ColorModeProvider, ColorModeScript } from '@kobalte/core';
+import { runMigrations } from './lib/runtime/state/migrations';
 import './index.css';
 
 const Landing = lazy(() => import('./routes/landing'));
@@ -19,6 +20,14 @@ const Tests = lazy(() => import('./routes/tests'));
 const WaSqlite = lazy(() => import('./routes/wa-sqlite'));
 
 const root = document.getElementById('root');
+
+// Run storage migrations (e.g. the one-time settings IndexedDB → localStorage
+// transfer) BEFORE the first render. `migrations.ts` doesn't import the settings
+// store and the routes are lazy, so settings.ts isn't evaluated until after this
+// resolves — guaranteeing migrations finish before any persisted state is read.
+// Fast no-op once applied (synchronous applied-check); async only on the single
+// first-upgrade load. Never rejects.
+await runMigrations();
 
 render(
     () => (

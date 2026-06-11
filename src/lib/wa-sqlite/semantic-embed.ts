@@ -1,20 +1,23 @@
 /**
  * Worker-side semantic embedding on the SHARED wa-sqlite module.
  *
- * The BGE encoder is compiled straight INTO wa-sqlite.wasm (see wasm/semantic +
- * CMakeLists.txt), so the C `vector_search` vtab embeds its query phrase with a
- * direct in-module call (`analyst_embed_query` -> `sem_embed` in
- * runtime_shim.c) — there is NO JS embed hook. This module covers the two
- * things that still need JS:
+ * The semantic engine — both the Model2Vec static embedder (production default)
+ * and the BGE BERT encoder — is compiled straight INTO wa-sqlite.wasm (see
+ * wasm/semantic + CMakeLists.txt), so the C `vector_search` vtab embeds its
+ * query phrase with a direct in-module call (`analyst_embed_query` ->
+ * `sem_embed` in runtime_shim.c) — there is NO JS embed hook. Which embedder is
+ * loaded is fixed by the compile-time `SEMANTIC_EMBEDDER` constant (see
+ * semantic-index-core.ts). This module covers the two things that still need JS:
  *
  *   1. loading the GGUF weights into the module once (`sem_init`), gated so a
- *      DB with no semantic index never pays the ~33 MB download; and
+ *      DB with no semantic index never pays the model download (~31 MB for the
+ *      Model2Vec static table, ~33 MB for the BGE Q8_0 encoder); and
  *   2. the async batch INDEX embedder (`embedTexts`) the semantic-index builder
  *      drives through `accessor.embed()`.
  *
  * Both the query path (C) and these JS paths share ONE model: `getWaSqlite()`
  * caches the module as a worker singleton, so `sem_init` runs at most once per
- * worker and the ~132 MB resident weights are shared across every open DB.
+ * worker and the resident weights are shared across every open DB.
  *
  * Browser/worker only (it fetches weights + writes wasm memory). Node/vitest
  * never calls these, so `sem_init` never runs there and the C query path
@@ -53,7 +56,8 @@ interface SemModule {
 const encoder = new TextEncoder();
 
 let warmPromise: Promise<void> | null = null;
-// Embedding dimensionality (sem_dim(), 384 for bge-small) — set once warm.
+// Embedding dimensionality (sem_dim(): 256 for Model2Vec, 384 for bge-small) —
+// set once warm.
 let dim = 0;
 
 async function getSemModule(): Promise<SemModule> {
@@ -70,10 +74,11 @@ function readCStr(m: SemModule, ptr: number): string {
 }
 
 /**
- * Fetch the BGE GGUF and load it into the shared wa-sqlite module via
- * `sem_init`. Idempotent + latched: concurrent/repeat calls share one boot; a
- * failure clears the latch so a later call retries (mirrors the old
- * warmupBgeEmbed). After it resolves the C query path and `embedTexts` are ready.
+ * Fetch the active embedder's GGUF (Model2Vec or BGE, per `SEMANTIC_EMBEDDER`)
+ * and load it into the shared wa-sqlite module via `sem_init`. Idempotent +
+ * latched: concurrent/repeat calls share one boot; a failure clears the latch so
+ * a later call retries (mirrors the old warmupBgeEmbed). After it resolves the C
+ * query path and `embedTexts` are ready.
  */
 export function warmSemanticModel(): Promise<void> {
     warmPromise ??= doWarm().catch((err) => {
@@ -107,8 +112,9 @@ async function doWarm(): Promise<void> {
 
 /**
  * Embed `texts` in the worker thread (warming the model first if needed): RAW
- * passages (NO query prefix — the C wrapper adds the BGE retrieval prefix only
- * for queries), CLS-pooled + L2-normalized `sem_dim()` vectors. This is the
+ * passages (NO query prefix — for BGE the C wrapper adds the retrieval prefix
+ * only to queries; Model2Vec is symmetric and adds none), pooled + L2-normalized
+ * `sem_dim()` vectors (CLS-pool for BGE, mean-pool for Model2Vec). This is the
  * async batch embedder the semantic-index builder drives via accessor.embed().
  */
 export async function embedTexts(texts: string[]): Promise<number[][]> {

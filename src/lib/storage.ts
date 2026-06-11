@@ -8,6 +8,15 @@ import type { DebugBlock } from './debug-log';
  */
 export const STORAGE_VERSION = 3;
 
+/**
+ * localStorage key for persisted Settings. Defined here (a leaf module) so both
+ * the settings store (settings.ts) and the storage migrations (migrations.ts)
+ * reference it without importing each other. Settings persist to localStorage —
+ * not IndexedDB — so they can be read SYNCHRONOUSLY at module init (no flicker);
+ * a one-time migration moves any existing IDB settings over (see migrations.ts).
+ */
+export const SETTINGS_KEY = `analyst-settings:v${STORAGE_VERSION}`;
+
 const DEBUG_KEY = `chat:debug:v${STORAGE_VERSION}`;
 const DEBUG_ENABLED_KEY = `chat:debug:enabled:v${STORAGE_VERSION}`;
 

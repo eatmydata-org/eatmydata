@@ -17,6 +17,11 @@ build
 src/assets/demo/
 src/assets/transformers/
 src/assets/wasm/
+
+# python venvs (CMake transformers/.venv for ONNX, wasm/semantic/.venv for the
+# production model GGUF converters — see `make models` / `make onnx-models`)
+**/.venv/
+
 # bge-embed: large GGUF weights (fetched via `make embed-model`) + the
 # downloaded UnicodeData.txt cache used to regenerate unicode-data.c.
 src/assets/models/

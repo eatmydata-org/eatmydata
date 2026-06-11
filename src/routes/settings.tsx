@@ -643,21 +643,9 @@ const TransformersSection: Component = () => {
                 />
             </Show>
 
-            {/* Semantic search: embeds high-cardinality free-text columns at
-                import so the planner can match rows by meaning via
-                vector_search(). The bge-embed model loads from static assets
-                on first use — no separate download step needed. */}
-            <Checkbox
-                class="flex items-center gap-2"
-                checked={useSettings().semanticSearchEnabled}
-                onChange={(v) => runtime.patchSettings({ semanticSearchEnabled: v })}
-            >
-                <CheckboxInput class="sr-only" />
-                <CheckboxControl />
-                <CheckboxLabel class="cursor-pointer">
-                    Enable semantic search (embed text columns on import)
-                </CheckboxLabel>
-            </Checkbox>
+            {/* Semantic search indexes high-cardinality free-text columns
+                automatically at import/seed (Model2Vec static embedder, loaded
+                from static assets on first use) — no toggle, no manual step. */}
         </Section>
     );
 };

@@ -10,8 +10,8 @@
  * file and writes it straight to OPFS — no seeding at click time.
  *
  * Semantic-search indexes are NOT prebuilt: the browser builds them at
- * import/seed time (autoIndexAfterImport, gated on the semanticSearchEnabled
- * setting), now cheap with the Model2Vec static embedder.
+ * import/seed time (autoIndexAfterImport, always-on), now cheap with the
+ * Model2Vec static embedder.
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

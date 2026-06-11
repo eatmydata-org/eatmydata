@@ -19,7 +19,6 @@ import {
 } from '@/registry/ui/dialog';
 import { Button } from '@/registry/ui/button';
 import {
-    DEMOS_BY_FAMILY,
     DEMO_ABOUT,
     type DemoAbout,
     type DemoFamily,
@@ -37,11 +36,13 @@ type Props = {
     initialFamily?: DemoFamily;
 };
 
-const FAMILY_ORDER: ReadonlyArray<{ family: DemoFamily; label: string }> = [
-    { family: 'retail', label: 'Retail demo' },
-    { family: 'northwind', label: 'Northwind' },
-    { family: 'adventureworks', label: 'AdventureWorks LT' },
-    { family: 'contoso', label: 'Contoso 100K' },
+const PICKER_ENTRIES: ReadonlyArray<{ spec: DemoSpec; label: string }> = [
+    { spec: 'retail-xs', label: 'Show Retailer - sm' },
+    { spec: 'retail-m', label: 'Show Retailer - m' },
+    { spec: 'retail-xl', label: 'Show Retailer - xl' },
+    { spec: 'northwind', label: 'Northwind' },
+    { spec: 'adventureworks', label: 'AdventureWorks LT' },
+    { spec: 'contoso', label: 'Contoso 100K' },
 ];
 
 function defaultSpecFor(family: DemoFamily): DemoSpec {
@@ -64,7 +65,6 @@ function formatRows(n: number): string {
 }
 
 export const DemoDialog: Component<Props> = (props) => {
-    const [family, setFamily] = createSignal<DemoFamily>('retail');
     const [spec, setSpec] = createSignal<DemoSpec>('retail-m');
     const [busy, setBusy] = createSignal(false);
     const [progress, setProgress] = createSignal<DemoProgress | null>(null);
@@ -77,9 +77,8 @@ export const DemoDialog: Component<Props> = (props) => {
     const [nameOverride, setNameOverride] = createSignal<string | null>(null);
     const effectiveName = (): string => nameOverride() ?? about().title;
 
-    const selectFamily = (f: DemoFamily) => {
-        setFamily(f);
-        setSpec(defaultSpecFor(f));
+    const selectSpec = (s: DemoSpec) => {
+        setSpec(s);
         setNameOverride(null);
     };
 
@@ -88,15 +87,10 @@ export const DemoDialog: Component<Props> = (props) => {
         on(
             () => props.open,
             (open) => {
-                if (open && props.initialFamily) selectFamily(props.initialFamily);
+                if (open && props.initialFamily) selectSpec(defaultSpecFor(props.initialFamily));
             },
         ),
     );
-
-    const selectSpec = (s: DemoSpec) => {
-        setSpec(s);
-        setNameOverride(null);
-    };
 
     const cancel = () => {
         abortCtrl?.abort();
@@ -106,7 +100,7 @@ export const DemoDialog: Component<Props> = (props) => {
     const submit = async () => {
         setError(null);
         setBusy(true);
-        setProgress({ loaded: 0, total: about().fileSizeBytesApprox });
+        setProgress({ phase: 'download', loaded: 0, total: about().fileSizeBytesApprox });
         abortCtrl = new AbortController();
         try {
             const src = await createDemoSource(spec(), effectiveName(), {
@@ -134,7 +128,7 @@ export const DemoDialog: Component<Props> = (props) => {
 
     return (
         <Dialog open={props.open} onOpenChange={(o) => !busy() && props.onOpenChange(o)}>
-            <DialogContent class="sm:max-w-[820px]">
+            <DialogContent class="sm:max-w-[820px] flex flex-col h-[min(680px,calc(100vh-2rem))] overflow-hidden">
                 <DialogHeader>
                     <DialogTitle>Add demo data</DialogTitle>
                     <DialogDescription>
@@ -143,19 +137,25 @@ export const DemoDialog: Component<Props> = (props) => {
                     </DialogDescription>
                 </DialogHeader>
 
-                <div class="grid grid-cols-[260px_1fr] gap-4 min-h-[420px]">
+                <div class="grid grid-cols-[260px_1fr] grid-rows-[minmax(0,1fr)] gap-4 flex-1 min-h-0">
                     {/* Left: dataset picker */}
                     <ul class="flex flex-col gap-1 overflow-y-auto border rounded-md p-1">
-                        <For each={FAMILY_ORDER}>
-                            {(f) => (
-                                <FamilyRow
-                                    family={f.family}
-                                    label={f.label}
-                                    selected={family() === f.family}
-                                    selectedSpec={spec()}
-                                    onSelectFamily={() => selectFamily(f.family)}
-                                    onSelectSpec={selectSpec}
-                                />
+                        <For each={PICKER_ENTRIES}>
+                            {(entry) => (
+                                <li>
+                                    <button
+                                        type="button"
+                                        class={
+                                            'w-full text-left rounded px-2 py-1.5 text-sm transition-colors ' +
+                                            (spec() === entry.spec
+                                                ? 'bg-primary/10 text-primary font-semibold'
+                                                : 'hover:bg-muted')
+                                        }
+                                        onClick={() => selectSpec(entry.spec)}
+                                    >
+                                        {entry.label}
+                                    </button>
+                                </li>
                             )}
                         </For>
                     </ul>
@@ -195,69 +195,30 @@ export const DemoDialog: Component<Props> = (props) => {
                             {formatRows(about().rowCountApprox)}
                         </span>
                         <div class="flex gap-2">
-                            <Button variant="ghost" onClick={cancel} disabled={false}>
-                                {busy() ? 'Cancel download' : 'Cancel'}
+                            <Button
+                                variant="ghost"
+                                onClick={cancel}
+                                disabled={busy() && progress()?.phase === 'index'}
+                            >
+                                {busy() && progress()?.phase === 'download'
+                                    ? 'Cancel download'
+                                    : 'Cancel'}
                             </Button>
                             <Button
                                 onClick={() => void submit()}
                                 disabled={busy() || !effectiveName().trim()}
                             >
-                                {busy() ? 'Downloading…' : 'Create'}
+                                {busy()
+                                    ? progress()?.phase === 'index'
+                                        ? 'Indexing…'
+                                        : 'Downloading…'
+                                    : 'Create'}
                             </Button>
                         </div>
                     </div>
                 </div>
             </DialogContent>
         </Dialog>
-    );
-};
-
-const FamilyRow: Component<{
-    family: DemoFamily;
-    label: string;
-    selected: boolean;
-    selectedSpec: DemoSpec;
-    onSelectFamily(): void;
-    onSelectSpec(spec: DemoSpec): void;
-}> = (props) => {
-    const variants = () => DEMOS_BY_FAMILY[props.family];
-
-    return (
-        <li>
-            <button
-                type="button"
-                class={
-                    'w-full text-left rounded px-2 py-1.5 text-sm transition-colors ' +
-                    (props.selected ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-muted')
-                }
-                onClick={props.onSelectFamily}
-            >
-                {props.label}
-            </button>
-            <Show when={props.selected && props.family === 'retail'}>
-                <div class="flex gap-1 mt-1 mb-1.5 pl-2">
-                    <For each={variants()}>
-                        {(v) => (
-                            <button
-                                type="button"
-                                class={
-                                    'flex-1 rounded border px-1.5 py-0.5 text-[11px] font-mono ' +
-                                    (props.selectedSpec === v.id
-                                        ? 'border-primary bg-primary/10 text-primary'
-                                        : 'border-border hover:bg-muted')
-                                }
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    props.onSelectSpec(v.id);
-                                }}
-                            >
-                                {v.variant}
-                            </button>
-                        )}
-                    </For>
-                </div>
-            </Show>
-        </li>
     );
 };
 
@@ -268,7 +229,7 @@ const AboutPanel: Component<{ about: DemoAbout }> = (props) => (
             <p class="text-xs text-muted-foreground mt-0.5">{props.about.summary}</p>
         </div>
 
-        <div class="prose prose-sm max-w-none text-foreground">
+        <div class="prose prose-sm max-w-none text-foreground [&_p]:mt-3 [&_p:first-child]:mt-0 [&_ul]:mt-3 [&_ol]:mt-3 [&_pre]:mt-3">
             <SolidMarkdown remarkPlugins={[remarkGfm]}>{props.about.description}</SolidMarkdown>
         </div>
 
@@ -284,7 +245,7 @@ const AboutPanel: Component<{ about: DemoAbout }> = (props) => (
                                 <div class="font-semibold">
                                     {p.id}. {p.title}
                                 </div>
-                                <div class="prose prose-xs max-w-none mt-0.5 text-foreground">
+                                <div class="prose prose-xs max-w-none mt-0.5 text-foreground [&_p]:mt-2 [&_p:first-child]:mt-0 [&_pre]:mt-2">
                                     <SolidMarkdown remarkPlugins={[remarkGfm]}>
                                         {p.body}
                                     </SolidMarkdown>
@@ -375,10 +336,22 @@ const ProgressBar: Component<{ value: DemoProgress }> = (props) => {
                 </Show>
             </div>
             <div class="text-[10px] text-muted-foreground tabular-nums flex justify-between">
-                <span>
-                    {formatBytes(props.value.loaded)}{' '}
-                    <Show when={props.value.total > 0}>/ {formatBytes(props.value.total)}</Show>
-                </span>
+                <Show
+                    when={props.value.phase === 'index'}
+                    fallback={
+                        <span>
+                            {formatBytes(props.value.loaded)}{' '}
+                            <Show when={props.value.total > 0}>
+                                / {formatBytes(props.value.total)}
+                            </Show>
+                        </span>
+                    }
+                >
+                    <span>
+                        Building search index{props.value.label ? ` · ${props.value.label}` : ''} ·{' '}
+                        {props.value.loaded}/{props.value.total} rows
+                    </span>
+                </Show>
                 <Show when={pct() !== null}>
                     <span>{pct()}%</span>
                 </Show>

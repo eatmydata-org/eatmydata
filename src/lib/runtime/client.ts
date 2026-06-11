@@ -11,7 +11,8 @@ import { ZERO_USAGE, type Message, type MessagePart } from '@/lib/types';
 import type { Action } from '@/lib/actions/types';
 import type { ActionExecution } from '@/lib/actions/executor';
 import type { ModelEntry, Settings } from './state/settings-types';
-import { defaultSettings, findModelEntryIn } from './state/settings-types';
+import { findModelEntryIn } from './state/settings-types';
+import { getSettings } from './state/settings';
 import { setLocalListener, subscribePeerEvents, publishPeer } from './state/broadcast';
 import * as host from './host';
 
@@ -54,7 +55,12 @@ const [mirror, setMirror] = createStore<TabMirror>({
     activeActionId: undefined,
     results: {},
     tickets: {},
-    settings: defaultSettings(),
+    // Seed from the host's RESOLVED settings — config defaults + the user's
+    // persisted choices, which `settings.ts` reads SYNCHRONOUSLY from localStorage
+    // at module init (it evaluates before this via client→host→settings). Cloned
+    // so the reactive store never aliases the host's object. So the first paint is
+    // already correct (no flicker); the later `getSnapshot()` reconcile is a no-op.
+    settings: structuredClone(getSettings()),
     recentActions: [],
     hydrated: false,
 });

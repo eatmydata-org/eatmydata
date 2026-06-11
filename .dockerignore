@@ -1,0 +1,39 @@
+# Keep the build context lean AND keep host-built artefacts out of the image so
+# the docker build is genuinely from-scratch. Everything excluded here is either
+# rebuilt inside the container or irrelevant to the build.
+
+# Version control (the .git dir is ~1 GB) — not needed by any build step.
+.git
+**/.git
+
+# Installed deps + build outputs — all rebuilt in the container.
+node_modules
+**/node_modules
+dist
+build
+**/.venv
+
+# Host-generated assets — rebuilt fresh (wasm / models / demo / onnx).
+src/assets/wasm
+src/assets/models
+src/assets/demo
+src/assets/transformers
+
+# Secrets: dev API keys live in .env.local and MUST NOT be baked into a
+# production bundle (Vite would inline VITE_DEV_* into the output). Keep the
+# committed .env.example.
+.env.local
+.env.*.local
+.env
+
+# Heavy submodule unused by the build (model-conversion oracle only).
+contrib/llama.cpp
+
+# Local debug / editor / OS cruft.
+chrome-debug-profile
+*.log
+.DS_Store
+.claude
+CLAUDE.md
+.husky
+

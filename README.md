@@ -72,6 +72,8 @@ SELECT t.* FROM vector_search('product', 'name', 'shoes', 20) AS t;
     - Up to 1.7x inference speedup compared to ONNX;
     - ~38x smaller WASM binary (~0.34 MB vs ONNX Runtime's ~13 MB).
 
+- from-scratch **Model2Vec static embedder** (distilled from BGE, in the same engine) powers production semantic indexing — a token-table lookup + mean pooling, no transformer forward pass, ~3,500x faster than the BERT encoder, so indexes are built in-browser at import time instead of being shipped pre-built.
+
 - **QuickJS for strict AI code sandboxing**
     - WASM sandbox without network/file/host access;
     - AI-generated JS code that does last-step data processing and assembling of
@@ -87,14 +89,17 @@ SELECT t.* FROM vector_search('product', 'name', 'shoes', 20) AS t;
 
 ## Semantic indexing and NER
 
-We use small models that fit in-browser processing, in `GGUF` format. The converter from HuggingFace models is included. Models are bundled with the app.
+We use small models that fit in-browser processing, in `GGUF` format. The converters from HuggingFace models are included. Models are bundled with the app.
 
-| Purpose    | Model                                                                                                                |
-| ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| Embeddings | [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) quantized + GGUF                             |
-| NER        | [gravitee-io/bert-small-pii-detection](https://huggingface.co/gravitee-io/bert-small-pii-detection) quantized + GGUF |
+| Purpose                    | Model                                                                                                                                                                        |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Embeddings (production)    | [Model2Vec](https://github.com/MinishLab/model2vec) static embedder distilled from [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) — 256-dim, f32 GGUF |
+| Embeddings (high-accuracy) | [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) quantized + GGUF                                                                                     |
+| NER                        | [gravitee-io/bert-small-pii-detection](https://huggingface.co/gravitee-io/bert-small-pii-detection) quantized + GGUF                                                         |
 
-We use an AI-coded inference engine optimized for these two models, with WASM SIMD kernels. The accuracy was validated against ONNX. We outperform the ONNX WASM build by 1.5x - 1.7x, with a ~38x smaller engine binary (~0.34 MB vs ONNX Runtime's ~13 MB).
+**Production semantic search runs a from-scratch Model2Vec static embedder** distilled from BGE: tokenize → gather one static vector per subword token → mean-pool → L2-normalize. There is no transformer forward pass, so it embeds at **~88,000 texts/sec (~3,500x the BERT encoder's ~25/s)** — embedding stops being the indexing bottleneck, which is why indexes are built in-browser at import time rather than shipped pre-built. On short product/column text it reaches ~99% of the full BGE encoder's retrieval quality (MAP@10 0.976 vs 0.987). The `model2vec` Python library is used offline only, to distill the static table; nothing of it ships. The choice is a single compile-time constant (`SEMANTIC_EMBEDDER`), so the bge-small BERT encoder below is one flip away as a high-accuracy alternative.
+
+The BGE-small BERT encoder is still bundled — as that selectable high-accuracy embedder and as the backbone shared with NER. For it (and NER) we use an AI-coded inference engine optimized for these models, with WASM SIMD kernels. The accuracy was validated against ONNX. We outperform the ONNX WASM build by 1.5x - 1.7x, with a ~38x smaller engine binary (~0.34 MB vs ONNX Runtime's ~13 MB).
 
 We mainly needed single-threaded inference for
 sqlite integration, NER addition was done just to reduce
@@ -124,8 +129,9 @@ Familiar to any Microsoft DBA or BI user:
 - Microsoft NorthWind Traders, sqlite port;
 - Our own "ShoeRetailer" database in 3 sizes (xs, m, xl).
 
-Databases can be loaded to your storage from "Data Sources" and come with pre-built semantic
-indexes (e.g. "show me all customer claims about sole defects" or "analyze revenue trends in our pet goods categories").
+Databases can be loaded to your storage from "Data Sources"; semantic indexes are built
+in-browser at load time (fast now thanks to the Model2Vec static embedder), enabling queries like
+"show me all customer claims about sole defects" or "analyze revenue trends in our pet goods categories".
 
 _TODO: start loading analysis examples bundled with demo db_
 

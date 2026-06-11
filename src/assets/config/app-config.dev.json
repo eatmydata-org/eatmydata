@@ -47,5 +47,13 @@
                 }
             ]
         }
-    ]
+    ],
+    "agentModels": {},
+    "piiEnabled": true,
+    "powerUser": true,
+    "showSqlConsole": false,
+    "showPiiTester": false,
+    "showEmbeddingsTester": false,
+    "showQjsTester": false,
+    "defaultDataSourcePersistence": "persistent"
 }

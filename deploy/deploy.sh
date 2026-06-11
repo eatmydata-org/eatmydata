@@ -65,9 +65,19 @@ for bucket in "${BUCKETS[@]}"; do
 done
 
 # Every content folder + every root file EXCEPT index.html.
+#
+# `config/` is deliberately NOT shipped: the public eatmydata.ai site uses the
+# config BUNDLED into the JS only (the index.html bootstrap skips the runtime
+# /config load on *.eatmydata.ai — see index.html / app-config-runtime.ts), and
+# the bucket has no /config path. The build still emits dist/production/config/ for
+# self-hosted (Docker) deploys; we just don't upload it here.
 for bucket in "${BUCKETS[@]}"; do
     for path in "$DIST"/*; do
         name=$(basename "$path")
+        if [[ "$name" == "config" ]]; then
+            echo "⏭  skipping config/ (bundled-only on eatmydata.ai)"
+            continue
+        fi
         if [[ -d "$path" ]]; then
             echo "⇄ $name/ → gs://$bucket"
             gcs_sync "$path" "gs://$bucket/$name"

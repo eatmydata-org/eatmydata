@@ -11,10 +11,12 @@ import {
 import { VECTOR_SEARCH_TESTS } from '@/lib/test-runner/tests-vector-search';
 import { BGE_EMBED_TESTS } from '@/lib/test-runner/tests-bge-embed';
 import { BERT_NER_TESTS } from '@/lib/test-runner/tests-bert-ner';
+import { WA_SQLITE_TESTS } from '../lib/test-runner/tests-wa-sqlite';
+import { RESULT_BLOCKS_TESTS } from '../lib/test-runner/tests-result-blocks';
 
 const ALL_TESTS: TestDef[] = [
-    //...WA_SQLITE_TESTS,
-    //...RESULT_BLOCKS_TESTS,
+    ...WA_SQLITE_TESTS,
+    ...RESULT_BLOCKS_TESTS,
     ...VECTOR_SEARCH_TESTS,
     ...BGE_EMBED_TESTS,
     ...BERT_NER_TESTS,
@@ -97,6 +99,10 @@ const TestsPage: Component = () => {
                 <h1 class="text-base font-semibold">Browser tests</h1>
                 <span class="text-xs text-muted-foreground">
                     DOM / worker / multi-tab scenarios that vitest can't reach
+                    <span class="ml-2 opacity-80">
+                        · ONNX-comparison cases (NER vs ONNX) need the comparison assets — build
+                        with <code class="font-mono">make onnx-models</code>
+                    </span>
                 </span>
                 <div class="ml-auto flex items-center gap-2">
                     <Show when={summary()}>

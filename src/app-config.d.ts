@@ -1,6 +1,8 @@
 /**
- * Types for the `@app-config` import — the LLM provider/model catalog seeded
- * at first load by `defaultProviders()` in
+ * Types for the `@app-config` import — the app's default configuration: the LLM
+ * provider/model catalog AND the rest of the default `Settings` (feature flags,
+ * default model / per-agent models, default data-source persistence). Read by
+ * `defaultSettings()` / `defaultProviders()` in
  * [runtime/state/settings-types.ts](runtime/state/settings-types.ts).
  *
  * At BUILD/RUNTIME the `@app-config` specifier is a Vite/vitest **alias** that
@@ -38,8 +40,20 @@ export interface AppConfigProvider {
 }
 
 export interface AppConfig {
-    defaultModelId?: string;
     providers: AppConfigProvider[];
+    // The rest mirror the whole `Settings` shape (minus the user-persisted
+    // `apiKeys`, and the derived `providers`): the config IS the default Settings.
+    // `defaultSettings()` reads each of these (see settings-types.ts), so a
+    // deployer's `/config/app-config.json` fully defines the initial UI state.
+    defaultModelId?: string;
+    agentModels?: { orchestrator?: string; planner?: string; coder?: string };
+    piiEnabled?: boolean;
+    powerUser?: boolean;
+    showSqlConsole?: boolean;
+    showPiiTester?: boolean;
+    showEmbeddingsTester?: boolean;
+    showQjsTester?: boolean;
+    defaultDataSourcePersistence?: 'memory' | 'temp' | 'persistent';
 }
 
 declare const config: AppConfig;

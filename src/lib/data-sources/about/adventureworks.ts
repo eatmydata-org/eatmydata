@@ -28,9 +28,6 @@ sales side — **customers**, **addresses**, **products** and their
 the same data you'll find in any AdventureWorks tutorial that says "use
 AdventureWorksLT" rather than the full OLTP database.
 
-Conversion to SQLite is courtesy of
-[martinandersen3d/AdventureWorks-for-SQLite](https://github.com/martinandersen3d/AdventureWorks-for-SQLite),
-which we vendor as a submodule under \`contrib/adventureworks-sqlite\`.
 Sales volumes are modest (~32 orders / ~540 line items), so this
 dataset is best for schema-shape exercises rather than analytics at
 scale.
@@ -55,7 +52,6 @@ scale.
         origin: "martinandersen3d / AdventureWorks-for-SQLite — port of Microsoft's AdventureWorksLT",
         url: 'https://github.com/martinandersen3d/AdventureWorks-for-SQLite',
         license: 'MIT (port); the original AdventureWorks sample is freely redistributable.',
-        docsUrl:
-            'https://learn.microsoft.com/en-us/sql/samples/adventureworks-install-configure',
+        docsUrl: 'https://learn.microsoft.com/en-us/sql/samples/adventureworks-install-configure',
     },
 };

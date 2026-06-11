@@ -24,7 +24,6 @@ import { ImportDialog } from '@/components/data-sources/import-dialog';
 import { ViewEditor } from '@/components/data-sources/view-editor';
 import { DemoDialog } from '@/components/data-sources/demo-dialog';
 import { ConfirmDialog } from '@/components/data-sources/confirm-dialog';
-import { SemanticIndexProgress } from '@/components/data-sources/semantic-index-progress';
 import { listSources, deleteSource, setDefaultSource } from '@/lib/data-sources/store';
 import type { DataSource } from '@/lib/data-sources/types';
 import { closeSqliteDb, destroySqliteOpfs } from '@/lib/sqlite/client';
@@ -388,8 +387,6 @@ const DataSourcesPage: Component = () => {
     return (
         <div class="h-svh flex flex-col bg-background text-foreground relative">
             <TopBar />
-
-            <SemanticIndexProgress />
 
             <div class="flex-1 min-h-0">
                 <Resizable

@@ -113,8 +113,7 @@ function fillsXml(): string {
 
 function numFmtsXml(): string {
     return `<numFmts count="${NUMFMTS.length}">${NUMFMTS.map(
-        (fmt, i) =>
-            `<numFmt numFmtId="${FORMAT_ID_BASE + i}" formatCode="${escapeAttr(fmt)}"/>`,
+        (fmt, i) => `<numFmt numFmtId="${FORMAT_ID_BASE + i}" formatCode="${escapeAttr(fmt)}"/>`,
     ).join('')}</numFmts>`;
 }
 
@@ -126,10 +125,7 @@ const XLSX_CSS = {
 
 type WritingOptionsWithCss = XLSX.WritingOptions & { xlsxCss?: typeof XLSX_CSS };
 
-function buildWorkbook(
-    rows: Record<string, unknown>[],
-    opts: SheetExportOptions,
-): XLSX.WorkBook {
+function buildWorkbook(rows: Record<string, unknown>[], opts: SheetExportOptions): XLSX.WorkBook {
     const sheetName = opts.sheetName ?? 'Sheet1';
     const cols = opts.columns;
 
@@ -139,9 +135,20 @@ function buildWorkbook(
         const data = rows.map((row) => cols.map((c) => row[c.key] ?? null));
         ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
 
-        ws['!cols'] = cols.map((c) =>
-            c.width !== undefined ? { wch: c.width } : {},
+        // Only emit a <col> for columns that actually specify a width. A
+        // width-less `{}` makes SheetJS write `<col min max/>` with no width,
+        // which Excel for Mac reads as a *hidden, zero-width* column — so a
+        // table exported with no per-column widths (the result-grid case) opened
+        // as a blank grid: the data was all there, every column was just
+        // invisible. `undefined` placeholders are skipped by SheetJS's writer;
+        // if no column has a width we drop `!cols` entirely so Excel falls back
+        // to the default (visible) column width.
+        const colSpecs: (XLSX.ColInfo | undefined)[] = cols.map((c) =>
+            c.width !== undefined ? { wch: c.width } : undefined,
         );
+        if (colSpecs.some((s) => s !== undefined)) {
+            ws['!cols'] = colSpecs as XLSX.ColInfo[];
+        }
 
         const wantBold = opts.boldHeader !== false;
         const wantBg = opts.headerBg !== false;

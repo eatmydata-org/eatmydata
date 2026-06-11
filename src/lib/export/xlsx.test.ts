@@ -13,27 +13,17 @@ function readZipEntry(buf: Uint8Array, name: string): string {
     const u8 = buf;
     const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
     for (let i = 0; i < u8.length - 4; i++) {
-        if (
-            u8[i] === 0x50 &&
-            u8[i + 1] === 0x4b &&
-            u8[i + 2] === 0x03 &&
-            u8[i + 3] === 0x04
-        ) {
+        if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x03 && u8[i + 3] === 0x04) {
             const method = dv.getUint16(i + 8, true);
             const compSize = dv.getUint32(i + 18, true);
             const nameLen = dv.getUint16(i + 26, true);
             const extraLen = dv.getUint16(i + 28, true);
-            const entryName = new TextDecoder().decode(
-                u8.subarray(i + 30, i + 30 + nameLen),
-            );
+            const entryName = new TextDecoder().decode(u8.subarray(i + 30, i + 30 + nameLen));
             const dataStart = i + 30 + nameLen + extraLen;
             const dataEnd = dataStart + compSize;
             if (entryName === name) {
                 const compData = u8.subarray(dataStart, dataEnd);
-                const raw =
-                    method === 8
-                        ? new Uint8Array(zlib.inflateRawSync(compData))
-                        : compData;
+                const raw = method === 8 ? new Uint8Array(zlib.inflateRawSync(compData)) : compData;
                 return new TextDecoder().decode(raw);
             }
             i = dataEnd - 1;
@@ -96,9 +86,7 @@ describe('rowsToXlsxBytes (styled)', () => {
     it('emits our custom <fills> palette including the header solid fill', () => {
         const styles = readZipEntry(styledBytes(), 'xl/styles.xml');
         expect(styles).toMatch(/<fills count="3">/);
-        expect(styles).toMatch(
-            /<fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"\/>/,
-        );
+        expect(styles).toMatch(/<fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"\/>/);
     });
 
     it('emits custom <numFmts> entries at numFmtId 164+', () => {
@@ -125,6 +113,39 @@ describe('rowsToXlsxBytes (styled)', () => {
         expect(sheet).toMatch(/<col[^/]*customWidth="1"/);
     });
 
+    it('omits <cols> entirely when no column specifies a width (Excel-for-Mac blank-grid regression)', () => {
+        // The result-grid export passes `{ key, header }` with no width. A
+        // width-less `<col min max/>` is read by Excel for Mac as a hidden,
+        // zero-width column, so every column rendered invisible (blank grid)
+        // while the data was actually present. Assert we emit no `<cols>` block
+        // — and in particular no width-less `<col>` — in that case.
+        const noWidthCols: ColumnSpec[] = [
+            { key: 'id', header: 'ID' },
+            { key: 'name', header: 'Name' },
+        ];
+        const sheet = readZipEntry(
+            rowsToXlsxBytes(SAMPLE_ROWS, { columns: noWidthCols }),
+            'xl/worksheets/sheet1.xml',
+        );
+        expect(sheet).not.toMatch(/<cols>/);
+        expect(sheet).not.toMatch(/<col\b[^>]*\/>/);
+    });
+
+    it('still emits <col> only for width-bearing columns in a mixed set', () => {
+        const mixed: ColumnSpec[] = [
+            { key: 'id', header: 'ID' }, // no width -> no <col>
+            { key: 'name', header: 'Name', width: 18 }, // width -> <col>
+        ];
+        const sheet = readZipEntry(
+            rowsToXlsxBytes(SAMPLE_ROWS, { columns: mixed }),
+            'xl/worksheets/sheet1.xml',
+        );
+        // exactly one <col>, and it carries a width (never a bare width-less col)
+        const colTags = sheet.match(/<col\b[^>]*\/>/g) ?? [];
+        expect(colTags).toHaveLength(1);
+        expect(colTags[0]).toMatch(/customWidth="1"/);
+    });
+
     it('header row cells reference an xf with our bold-header fontId', () => {
         const bytes = styledBytes();
         const sheet = readZipEntry(bytes, 'xl/worksheets/sheet1.xml');
@@ -135,8 +156,7 @@ describe('rowsToXlsxBytes (styled)', () => {
         expect(firstCellMatch).not.toBeNull();
         const sIdx = Number(firstCellMatch![1]);
 
-        const cellXfsBlock =
-            styles.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1] ?? '';
+        const cellXfsBlock = styles.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1] ?? '';
         const xfs = cellXfsBlock.match(/<xf\b[^/]*\/?>/g) ?? [];
         const headerXf = xfs[sIdx];
         expect(headerXf).toBeDefined();

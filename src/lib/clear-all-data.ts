@@ -3,7 +3,7 @@ import { closeSqliteDb, destroySqliteOpfs } from '@/lib/sqlite/client';
 import { clearAllActions } from '@/lib/actions/store';
 
 /**
- * Wipe everything Analyst persists in this browser: every data source
+ * Wipe everything EatMyData persists in this browser: every data source
  * (its SQLite database + tables, whether the bytes live in OPFS or only in
  * the worker's memory) and the entire action history (saved actions, their
  * version history, and every recorded run/result).

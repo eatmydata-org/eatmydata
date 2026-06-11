@@ -3,6 +3,7 @@ import { createStore } from 'solid-js/store';
 import { getSettings, patchSettings } from './settings';
 import { setLocalListener } from './broadcast';
 import { defaultSettings, type ProviderInstance, type Settings } from './settings-types';
+import { SETTINGS_KEY } from '@/lib/storage';
 
 // Regression: the Settings UI builds patches by mapping the live Solid
 // `providers` store, so a patch can carry store PROXIES. Both IDB persist and
@@ -53,5 +54,13 @@ describe('patchSettings with Solid-store-proxy patches', () => {
             .models[0]!.id;
         patchSettings({ agentModels: { coder: googleModelId } });
         expect(getSettings().agentModels.coder).toBe(googleModelId);
+
+        // Round-trips to localStorage (the persisted store), with `providers`
+        // stripped (derived) — only user state is written.
+        const persisted = JSON.parse(localStorage.getItem(SETTINGS_KEY)!) as Partial<Settings> & {
+            providers?: unknown;
+        };
+        expect(persisted.agentModels?.coder).toBe(googleModelId);
+        expect(persisted.providers).toBeUndefined();
     });
 });

@@ -20,11 +20,11 @@ export const CONTOSO: DemoAbout = {
     description: `
 Contoso is Microsoft's go-to fictional company across their
 documentation — most prominently as the worked example for Power BI and
-Fabric. SQL BI maintains a modern, deterministic generator
-([Contoso-Data-Generator-V2](https://github.com/sql-bi/Contoso-Data-Generator-V2))
-that emits classic dimensional-modelling shapes: a **Date** dimension,
+Fabric.
+
+The database features classic dimensional-modelling shapes: a **Date** dimension,
 **Customer / Store / Product** dimensions, **CurrencyExchange** rates,
-and two facts — a fully-denormalised **Sales** fact and a normalised
+and two facts: a fully-denormalised **Sales** fact and a normalised
 **Orders** fact (order headers in **Orders**, line items in
 **OrderRows**).
 
@@ -32,14 +32,9 @@ The "100K" variant shipped here carries ~200K Sales lines and ~200K
 order lines across ~83K orders, against ~105K customers and ~2.5K
 products. The schema is intentionally well-suited to BI exercises:
 clear dim/fact split and conformed dimensions.
-
-**Build dependency**: the SQL BI CSV archives are .7z-compressed and we
-extract them with \`7zz\` (macOS: \`brew install sevenzip\`). If the
-extractor is missing, \`make demo-contoso\` exits with a clear message
-and the other demos remain available.
 `.trim(),
     rowCountApprox: 685_000,
-    fileSizeBytesApprox: 73_000_000,
+    fileSizeBytesApprox: 73_027_584,
     tables: [
         { name: 'Date', rows: 3_653, note: 'date dimension' },
         { name: 'CurrencyExchange', rows: 91_325, note: 'daily exchange rates' },

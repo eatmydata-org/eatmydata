@@ -8,13 +8,20 @@ import { autoIndexAfterImport } from './semantic-index';
 import type { DataSource } from './types';
 
 export type DemoProgress = {
-    /** Bytes downloaded so far. */
+    /**
+     * Which phase the popup is blocked on: 'download' (fetching the .sqlite) or
+     * 'index' (building the semantic-search indexes before the dialog closes).
+     */
+    phase: 'download' | 'index';
+    /** download: bytes loaded; index: rows embedded for the current column. */
     loaded: number;
     /**
-     * Total bytes expected. May be 0 if the server omits Content-Length;
-     * the UI should fall back to an indeterminate spinner in that case.
+     * download: total bytes expected (may be 0 if the server omits
+     * Content-Length → indeterminate spinner); index: total rows for the column.
      */
     total: number;
+    /** index phase only: the column being embedded, e.g. "products.name". */
+    label?: string;
 };
 
 export type CreateDemoOptions = {
@@ -131,13 +138,21 @@ export async function createDemoSource(
         }
     }
 
-    // Best-effort, non-blocking: embed high-cardinality free-text columns (e.g.
-    // retail `claims.description`) so vector_search works on the demo too. Gated
-    // inside on the `semanticSearchEnabled` setting, so it no-ops unless the user
-    // opted in. Demo tables are freshly written, so none are "overwritten".
-    autoIndexAfterImport(
+    // Build the semantic-search indexes (e.g. retail `claims.description`) BEFORE
+    // returning, so the dialog stays open with progress until search is ready —
+    // cheap now with the Model2Vec static embedder. Index progress is forwarded to
+    // the same `onProgress` as the download (phase:'index'). Best-effort: never
+    // throws. Demo tables are freshly written, so none are "overwritten".
+    await autoIndexAfterImport(
         source,
         about.tables.map((t) => ({ name: t.name, overwritten: false })),
+        (p) =>
+            opts.onProgress?.({
+                phase: 'index',
+                loaded: p.done,
+                total: p.total,
+                label: `${p.table}.${p.column}`,
+            }),
     );
     return source;
 }
@@ -161,7 +176,7 @@ async function fetchWithProgress(
 
     if (!res.body || !onProgress) {
         const buf = await res.arrayBuffer();
-        onProgress?.({ loaded: buf.byteLength, total: total || buf.byteLength });
+        onProgress?.({ phase: 'download', loaded: buf.byteLength, total: total || buf.byteLength });
         return buf;
     }
 
@@ -173,7 +188,7 @@ async function fetchWithProgress(
         if (done) break;
         chunks.push(value);
         loaded += value.byteLength;
-        onProgress({ loaded, total });
+        onProgress({ phase: 'download', loaded, total });
     }
     // Concatenate into a single ArrayBuffer; ~100 MB is fine in a single
     // contiguous buffer in the browser.

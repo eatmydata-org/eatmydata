@@ -5,10 +5,15 @@
  *
  * No Solid / agent / SDK imports here — this module is a pure leaf so
  * both sides of the cross-tab boundary can share its types and helpers.
- * (The `@app-config` import is data only — a JSON catalog, no runtime deps.)
+ *
+ * The provider/model catalog is no longer a direct `@app-config` import — it's
+ * read through {@link getActiveCatalog}, which returns the RUNTIME-active
+ * `/config/app-config.json` (bootstrapped in index.html before the bundle) and
+ * falls back to the embedded `@app-config` when no runtime file is deployed.
+ * See app-config-runtime.ts.
  */
 
-import appConfig from '@app-config';
+import { getActiveCatalog } from './app-config-runtime';
 
 /**
  * The kinds of LLM backend a {@link ProviderInstance} can be. Each kind
@@ -112,15 +117,6 @@ export interface Settings {
      */
     agentModels: Partial<Record<AgentModelKey, string>>;
     piiEnabled: boolean;
-    /**
-     * Opt-in: when on, importing data embeds its high-cardinality free-text
-     * columns (on-device, via the BGE model) so the planner can match rows by
-     * meaning with `vector_search(...)`. Off by default — enabling it incurs a
-     * one-time model download (cached via the Cache API) and per-import CPU.
-     * The embeddings + search stay on-device; the privacy guarantee is
-     * unchanged (matched rows reach the LLM only through the PII sanitizer).
-     */
-    semanticSearchEnabled: boolean;
     powerUser: boolean;
     showSqlConsole: boolean;
     showPiiTester: boolean;
@@ -205,10 +201,13 @@ function seedApiKey(kind: ProviderKind, jsonKey: string | undefined): string | u
 // Factory (not a module-level const) so every consumer gets a fresh,
 // independently mutable copy — see the long-standing note about Solid's
 // `reconcile()` mutating shared entries in place. The catalog (provider ids,
-// kinds, labels, models, baked-in pricing) comes from the `@app-config` JSON
-// chosen at build time; dev API keys overlay from `.env.local` per kind.
+// kinds, labels, models, baked-in pricing, optional per-provider apiKey/baseURL)
+// comes from the RUNTIME-active config: `getActiveCatalog()` returns the
+// deployed `/config/app-config.json` when present, else the embedded
+// `@app-config` (see app-config-runtime.ts). Dev `.env.local` keys overlay onto
+// a blank key per kind (dev builds only).
 export function defaultProviders(): ProviderInstance[] {
-    return appConfig.providers.map((p) => {
+    return getActiveCatalog().providers.map((p) => {
         const provider: ProviderInstance = {
             id: p.id,
             kind: p.kind,
@@ -223,23 +222,44 @@ export function defaultProviders(): ProviderInstance[] {
     });
 }
 
+/**
+ * Filter a raw `agentModels`-shaped record down to known agent keys with string
+ * values — used for both the config-supplied defaults and persisted user picks.
+ */
+function pickAgentModels(raw: Record<string, unknown> | undefined): Settings['agentModels'] {
+    const out: Settings['agentModels'] = {};
+    if (raw && typeof raw === 'object') {
+        for (const a of AGENT_MODEL_KEYS) {
+            const v = raw[a];
+            if (typeof v === 'string') out[a] = v;
+        }
+    }
+    return out;
+}
+
+// The default Settings ARE the active config: every field is read from
+// `getActiveCatalog()` (the deployed `/config/app-config.json`, else the embedded
+// `@app-config`), with the historical default as the fallback when a field is
+// absent. `providers`/`defaultModelId` stay derived; `apiKeys` is user-persisted
+// (a deployer pre-seeds a key via a provider's `apiKey`).
 export function defaultSettings(): Settings {
+    const cfg = getActiveCatalog();
     const providers = defaultProviders();
+    const agentModels = pickAgentModels(cfg.agentModels);
     return {
         providers,
         apiKeys: {},
-        // The orchestrator is the primary agent; with no overrides it (and thus
-        // `defaultModelId`) resolves to the config default.
-        defaultModelId: resolveAgentModel(providers, {}, 'orchestrator'),
-        agentModels: {},
-        piiEnabled: true,
-        semanticSearchEnabled: false,
-        powerUser: import.meta.env.DEV,
-        showSqlConsole: false,
-        showPiiTester: false,
-        showEmbeddingsTester: false,
-        showQjsTester: false,
-        defaultDataSourcePersistence: 'persistent',
+        // The orchestrator is the primary agent; with no user override its
+        // resolved model is `defaultModelId`.
+        defaultModelId: resolveAgentModel(providers, agentModels, 'orchestrator'),
+        agentModels,
+        piiEnabled: cfg.piiEnabled ?? true,
+        powerUser: cfg.powerUser ?? import.meta.env.DEV,
+        showSqlConsole: cfg.showSqlConsole ?? false,
+        showPiiTester: cfg.showPiiTester ?? false,
+        showEmbeddingsTester: cfg.showEmbeddingsTester ?? false,
+        showQjsTester: cfg.showQjsTester ?? false,
+        defaultDataSourcePersistence: cfg.defaultDataSourcePersistence ?? 'persistent',
     };
 }
 
@@ -266,7 +286,9 @@ export function resolveAgentModel(
     const has = (id: string | undefined): id is string => !!id && enabled.some((m) => m.id === id);
     const saved = agentModels[agentId];
     if (has(saved)) return saved;
-    const cfg = appConfig.defaultModelId;
+    // Config default (`defaultModelId` from the active catalog), validated
+    // against the enabled set, else the first enabled model.
+    const cfg = getActiveCatalog().defaultModelId;
     return has(cfg) ? cfg : (enabled[0]?.id ?? '');
 }
 
@@ -420,9 +442,10 @@ export function mergeWithDefaults(p: Partial<Settings>): Settings {
 
     // Per-agent picks are kept RAW (any string) — validity against the catalog
     // is checked at resolution time (`resolveAgentModel`), not here. A pick whose
-    // model has (temporarily) left the catalog is therefore retained in IDB and
+    // model has (temporarily) left the catalog is therefore retained and
     // re-applies if the model returns, rather than being silently dropped.
-    const agentModels: Settings['agentModels'] = {};
+    // Seed from the config's `agentModels`, then a persisted user pick overrides.
+    const agentModels: Settings['agentModels'] = pickAgentModels(getActiveCatalog().agentModels);
     if (p.agentModels && typeof p.agentModels === 'object') {
         for (const a of AGENT_MODEL_KEYS) {
             const v = (p.agentModels as Record<string, unknown>)[a];

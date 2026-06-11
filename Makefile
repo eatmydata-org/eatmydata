@@ -49,7 +49,8 @@ submodules-init:
 # ---------------------------------------------------------------------------
 .PHONY: qjs wa-sqlite semantic transformers
 .PHONY: qjs-clean wa-sqlite-clean wa-sqlite-reset semantic-clean transformers-clean
-.PHONY: vector-leakcheck semantic-unicode-data embed-model ner-model semantic-verify transformers-embed-bench
+.PHONY: vector-leakcheck semantic-unicode-data embed-model ner-model m2v-model
+.PHONY: models models-venv onnx-models semantic-verify transformers-embed-bench
 
 # Configure once; re-run when CMakeLists.txt changes (cmake's generated build
 # system self-regenerates too, so this is belt-and-suspenders).
@@ -113,6 +114,55 @@ semantic-unicode-data:
 	python3 wasm/semantic/tools/gen-unicode-data.py > wasm/semantic/src/unicode-data.c
 	@echo "regenerated wasm/semantic/src/unicode-data.c"
 
+# ---------------------------------------------------------------------------
+# On-device model GGUFs (src/assets/models/, gitignored)
+#
+# TWO deliberately separate families:
+#   * `make models`      — the THREE GGUFs the PRODUCTION bundle imports via
+#                          `new URL('@/assets/models/*.gguf', ...)`. A production
+#                          `vite build` FAILS without them:
+#                            - bge-small-en-v1.5-q8_0.gguf       (embed-model)
+#                            - bert-small-pii-detection-q8_0.gguf (ner-model)
+#                            - bge-m2v-d256.gguf                  (m2v-model)
+#                          Needs a Python venv with torch-cpu (NER weight load +
+#                          M2V distill) but NOT optimum/onnxruntime.
+#   * `make onnx-models` — the transformers.js ONNX export (alias of
+#                          `make transformers`). COMPARISON-ONLY: feeds the /pii
+#                          ("compare vs ONNX") and /tests (NER-vs-ONNX parity)
+#                          surfaces, NEVER the main app. Heavy (optimum +
+#                          onnxruntime). Lands under its OWN asset path,
+#                          src/assets/transformers/, so it is trivially excluded
+#                          from a production bundle.
+#
+# The two use SEPARATE venvs so the light production-model build never pulls the
+# ONNX export toolchain:
+#   - models      -> $(MODELS_VENV)          (torch + transformers + gguf + model2vec)
+#   - onnx-models -> wasm/transformers/.venv (optimum + onnx, built by CMake)
+# ---------------------------------------------------------------------------
+MODELS_VENV ?= wasm/semantic/.venv
+MODELS_PY   := $(MODELS_VENV)/bin/python
+
+# Light venv for the GGUF converters — distinct from the CMake `transformers-venv`
+# (ONNX) so a production-model build stays free of optimum/onnxruntime.
+models-venv:
+	python3 -m venv $(MODELS_VENV)
+	$(MODELS_PY) -m pip install --quiet --upgrade pip
+	$(MODELS_PY) -m pip install --quiet \
+	    numpy gguf transformers torch "model2vec[distill]" scikit-learn huggingface_hub
+
+# The three GGUFs the production bundle imports. embed-model curls a prebuilt
+# community GGUF; ner-model + m2v-model convert HF checkpoints — the bert-small
+# checkpoint is pre-fetched here so ner-model's OFFLINE convert finds it in the
+# HF cache (m2v's bge teacher is fetched online by model2vec itself).
+models: models-venv embed-model
+	$(MODELS_PY) -c "from huggingface_hub import snapshot_download; snapshot_download('gravitee-io/bert-small-pii-detection')"
+	$(MAKE) ner-model
+	$(MAKE) m2v-model
+
+# The ONNX comparison assets (heavy) — same as `make transformers`. Build these
+# to populate the /pii "compare vs ONNX" button and the /tests NER-parity cases.
+onnx-models: transformers
+
 # Fetch the bge-small-en-v1.5 (embedding) GGUF into src/assets/models/ (gitignored).
 # Downloads a prebuilt community GGUF, or converts the HF checkpoint via llama.cpp.
 embed-model:
@@ -120,10 +170,11 @@ embed-model:
 
 # Convert gravitee-io/bert-small-pii-detection (token-classification) to a GGUF
 # the semantic engine reads -> src/assets/models/bert-small-pii-detection-q8_0.gguf
-# (gitignored). Offline against the HF cache, via the transformers venv. Run
-# `make transformers` once first if the venv is absent.
+# (gitignored). Offline against the HF cache, via the models venv. Run
+# `make models-venv` first if the venv is absent (and ensure the checkpoint is in
+# the HF cache — `make models` pre-fetches it).
 ner-model:
-	wasm/transformers/.venv/bin/python wasm/semantic/tools/convert-ner-gguf.py \
+	$(MODELS_PY) wasm/semantic/tools/convert-ner-gguf.py \
 	  --outtype q8_0 --outfile src/assets/models/bert-small-pii-detection-q8_0.gguf
 
 # Distill a Model2Vec STATIC embedder from a BGE teacher into a GGUF the semantic
@@ -132,12 +183,12 @@ ner-model:
 # is free at runtime (the artifact is a [vocab x DIM] table), and Phase-0 found
 # bge-base/DIM=256 the sweet spot. The matrix is reindexed into the bge GGUF's id
 # order so the runtime reuses sem_tokenize unchanged. Needs the bge GGUF (make
-# embed-model) + model2vec in the transformers venv. Output gitignored.
+# embed-model) + model2vec in the models venv (make models-venv). Output gitignored.
 M2V_SRC ?= BAAI/bge-base-en-v1.5
 M2V_DIM ?= 256
 m2v-model:
-	wasm/transformers/.venv/bin/python -m pip install --quiet "model2vec[distill]" scikit-learn
-	wasm/transformers/.venv/bin/python wasm/semantic/tools/convert-m2v-gguf.py \
+	$(MODELS_PY) -m pip install --quiet "model2vec[distill]" scikit-learn
+	$(MODELS_PY) wasm/semantic/tools/convert-m2v-gguf.py \
 	  --source $(M2V_SRC) --pca-dims $(M2V_DIM) \
 	  --bge-gguf src/assets/models/bge-small-en-v1.5-q8_0.gguf \
 	  --outfile src/assets/models/bge-m2v-d$(M2V_DIM).gguf
@@ -233,3 +284,55 @@ remote-debug-browser:
 		--remote-allow-origins=* \
 		--user-data-dir=./chrome-debug-profile \
 		"http://localhost:5173"
+
+# ---------------------------------------------------------------------------
+# Docker — full, from-scratch build on a fresh Debian (docker/Dockerfile).
+#
+# Builds EVERYTHING the production bundle needs: pnpm deps, all WASM (qjs,
+# wa-sqlite + vector ext, semantic) via CMake + wasi-sdk, the three production
+# model GGUFs (`make models`), all demo databases (`make demo-data`), then
+# `vite build` -> dist/production.
+#
+# All caches live in BuildKit cache mounts (apt / pnpm store / cmake build dir /
+# pip / HuggingFace), NOT the host: re-runs are fast and NOTHING but the chosen
+# output is written to the host project folder. The source is COPYed into the
+# image (see .dockerignore), so node_modules, build/, venvs, downloaded SDKs and
+# model checkpoints never touch the host tree.
+#
+# Two outputs (two stages):
+#   a) make docker-dist  -> exports dist/production to the host (scratch stage).
+#   b) make docker-image -> a runnable nginx image serving the bundle.
+#
+# Note: the heavy ONNX comparison assets (`make onnx-models`) are intentionally
+# NOT part of the docker build (production app doesn't use them). Set
+# INCLUDE_ONNX=1 to fold them in.
+# ---------------------------------------------------------------------------
+.PHONY: docker-dist docker-image
+
+DOCKER       ?= docker
+DOCKERFILE   ?= docker/Dockerfile
+WEB_IMAGE    ?= eatmydata-web:latest
+INCLUDE_ONNX ?= 0
+
+# a) Build in Docker and EXPORT the production bundle to ./dist/production.
+#    (A clean export — the prior dist/production is replaced.)
+docker-dist:
+	rm -rf dist/production
+	DOCKER_BUILDKIT=1 $(DOCKER) build \
+	    --file $(DOCKERFILE) \
+	    --target dist \
+	    --build-arg INCLUDE_ONNX=$(INCLUDE_ONNX) \
+	    --output type=local,dest=dist/production \
+	    .
+	@echo "exported bundle -> dist/production"
+
+# b) Build in Docker and produce a runnable nginx image serving the bundle.
+#    Run it with:  docker run --rm -p 8080:80 $(WEB_IMAGE)   then open :8080
+docker-image:
+	DOCKER_BUILDKIT=1 $(DOCKER) build \
+	    --file $(DOCKERFILE) \
+	    --target server \
+	    --build-arg INCLUDE_ONNX=$(INCLUDE_ONNX) \
+	    --tag $(WEB_IMAGE) \
+	    .
+	@echo "built image -> $(WEB_IMAGE)  (docker run --rm -p 8080:80 $(WEB_IMAGE))"

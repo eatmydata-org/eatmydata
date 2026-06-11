@@ -2,7 +2,7 @@ import { defineConfig, defaultClientConditions } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import solid from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
 import { workerVersion } from './tools/vite-plugin-worker-version';
@@ -49,6 +49,20 @@ function hashAssetDir(dir: string): string {
     return h.digest('hex').slice(0, 16);
 }
 
+/// True when `dir` exists and contains at least one file. Used to gate the
+/// viteStaticCopy targets: an empty/absent source folder makes the plugin throw
+/// "No file was found to copy", which would break any build that legitimately
+/// ships without that asset family — e.g. a production build with the ONNX
+/// comparison assets (src/assets/transformers, `make onnx-models`) omitted, or
+/// a fresh clone before `make demo-data`.
+function dirHasFiles(dir: string): boolean {
+    try {
+        return collectFiles(dir).length > 0;
+    } catch {
+        return false;
+    }
+}
+
 export default defineConfig(({ command }) => {
     const isProduction = 'production' == process.env.NODE_ENV;
     const projectRoot = fileURLToPath(new URL('.', import.meta.url));
@@ -76,6 +90,28 @@ export default defineConfig(({ command }) => {
     const DEMO_ASSET_BASE = `/${demoVersion}/demo`;
     const TRANSFORMERS_ASSET_BASE = `/${transformersVersion}/transformers`;
 
+    // Only copy an asset family whose source folder actually has files — the
+    // plugin errors on an empty glob. A production bundle built without the ONNX
+    // comparison assets (INCLUDE_ONNX off / `make onnx-models` not run) ships no
+    // src/assets/transformers, and that's fine: the /pii + /tests ONNX surfaces
+    // simply 404 until those assets are built.
+    const staticCopyTargets = [
+        {
+            src: 'src/assets/transformers/**',
+            dest: `${transformersVersion}/transformers/`,
+            rename: { stripBase: 3 },
+            present: dirHasFiles(resolve(projectRoot, 'src/assets/transformers')),
+        },
+        {
+            src: 'src/assets/demo/**',
+            dest: `${demoVersion}/demo/`,
+            rename: { stripBase: 3 },
+            present: dirHasFiles(resolve(projectRoot, 'src/assets/demo')),
+        },
+    ]
+        .filter((t) => t.present)
+        .map(({ present: _present, ...t }) => t);
+
     // The LLM provider/model catalog is seeded from a JSON config file chosen
     // at build time. `APP_CONFIG` (a project-relative or absolute path) wins;
     // otherwise default to the dev catalog under `vite serve` and the prod
@@ -94,6 +130,13 @@ export default defineConfig(({ command }) => {
             ? appConfigEnv
             : resolve(projectRoot, appConfigEnv);
     }
+
+    // The build emits the RUNTIME config to the stable, un-hashed
+    // `config/app-config.json` via the `rh-emit-runtime-config` plugin below —
+    // NOT viteStaticCopy, which preserves a single file's source dir structure
+    // (it landed at config/src/assets/config/…). A direct write gives the exact
+    // output path. See src/lib/runtime/state/app-config-runtime.ts.
+    const outDir = `dist/${isProduction ? 'production' : 'development'}`;
 
     return {
         server: {
@@ -131,20 +174,37 @@ export default defineConfig(({ command }) => {
                 },
                 { key: 'wa-sqlite-probe', dir: 'src/lib/wa-sqlite-probe' },
             ]),
-            viteStaticCopy({
-                targets: [
-                    {
-                        src: 'src/assets/transformers/**',
-                        dest: `${transformersVersion}/transformers/`,
-                        rename: { stripBase: 3 },
-                    },
-                    {
-                        src: 'src/assets/demo/**',
-                        dest: `${demoVersion}/demo/`,
-                        rename: { stripBase: 3 },
-                    },
-                ],
-            }),
+            viteStaticCopy({ targets: staticCopyTargets }),
+            // Build: write the runtime config to the EXACT output path
+            // `config/app-config.json` (the chosen catalog — authoritative at
+            // runtime; the app embeds a fallback). A direct write avoids
+            // viteStaticCopy's single-file dir-structure quirk.
+            {
+                name: 'rh-emit-runtime-config',
+                apply: 'build',
+                closeBundle() {
+                    const cfgDir = resolve(projectRoot, outDir, 'config');
+                    mkdirSync(cfgDir, { recursive: true });
+                    writeFileSync(resolve(cfgDir, 'app-config.json'), readFileSync(appConfigPath));
+                },
+            },
+            // Dev: serve `/config/app-config.json` (from the chosen catalog) so
+            // `vite serve` exercises the same path the deployed build uses.
+            {
+                name: 'rh-runtime-config-dev',
+                configureServer(server) {
+                    server.middlewares.use((req, res, next) => {
+                        const url = (req.url ?? '').split('?')[0];
+                        if (url === '/config/app-config.json') {
+                            res.setHeader('Content-Type', 'application/json');
+                            res.setHeader('Cache-Control', 'no-store');
+                            res.end(readFileSync(appConfigPath));
+                            return;
+                        }
+                        next();
+                    });
+                },
+            },
         ],
         publicDir: './public',
         // .gguf (bge-embed model weights) isn't a built-in Vite asset type;

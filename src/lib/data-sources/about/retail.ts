@@ -169,7 +169,7 @@ export const RETAIL_XS: DemoAbout = {
     summary: 'Synthetic shoe retailer, smallest size — quick to download.',
     description: DESCRIPTION,
     rowCountApprox: 114_852,
-    fileSizeBytesApprox: 9_740_288,
+    fileSizeBytesApprox: 10_153_984,
     tables: buildTables({
         warehouses: 8,
         products: 1_500,
@@ -189,10 +189,10 @@ export const RETAIL_M: DemoAbout = {
     family: 'retail',
     variant: 'm',
     title: 'Retail demo (m · ~350 k rows)',
-    summary: 'Synthetic shoe retailer, mid size — good default.',
+    summary: 'Synthetic shoe retailer, mid size.',
     description: DESCRIPTION,
     rowCountApprox: 356_374,
-    fileSizeBytesApprox: 30_367_744,
+    fileSizeBytesApprox: 32_034_816,
     tables: buildTables({
         warehouses: 8,
         products: 4_000,
@@ -215,7 +215,7 @@ export const RETAIL_XL: DemoAbout = {
     summary: 'Synthetic shoe retailer, largest size — stress-test territory.',
     description: DESCRIPTION,
     rowCountApprox: 1_202_406,
-    fileSizeBytesApprox: 103_489_536,
+    fileSizeBytesApprox: 108_052_480,
     tables: buildTables({
         warehouses: 8,
         products: 10_000,

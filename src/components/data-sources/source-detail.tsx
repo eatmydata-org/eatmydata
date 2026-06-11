@@ -12,7 +12,6 @@ import { Badge } from '@/registry/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/registry/ui/popover';
 import type { DataSource } from '@/lib/data-sources/types';
 import { getSourceDb, listTableMeta, deleteTableMeta } from '@/lib/data-sources/db';
-import { indexSourceForSearch } from '@/lib/data-sources/semantic-index';
 import { listSources, putSource } from '@/lib/data-sources/store';
 import { dedupHumanName } from '@/lib/data-sources/identifier';
 import { deleteActionCascade, findActionsReferencingTable } from '@/lib/actions/store';
@@ -47,31 +46,8 @@ export const SourceDetail: Component<Props> = (props) => {
     const [selectedTable, setSelectedTable] = createSignal<string | null>(null);
     const [gridRefreshTick, setGridRefreshTick] = createSignal(0);
 
-    // "Index for search": embed high-cardinality free-text columns on-device so
-    // the assistant can match them by meaning (vector_search) instead of LIKE.
-    // Per-column progress streams to the page-level banner; this local state
-    // just drives the button label and a final notice (errors / "nothing to do").
-    const [indexing, setIndexing] = createSignal(false);
-    const [indexNotice, setIndexNotice] = createSignal<string | null>(null);
-    const runIndexForSearch = async () => {
-        if (indexing()) return;
-        setIndexing(true);
-        setIndexNotice(null);
-        try {
-            const cols = await indexSourceForSearch(props.source);
-            const plural = cols.length === 1 ? '' : 's';
-            setIndexNotice(
-                cols.length > 0
-                    ? `Indexed ${cols.length} text column${plural} for semantic search: ${cols.join(', ')}.`
-                    : 'No high-cardinality free-text columns found to index in this source.',
-            );
-            props.onSourceUpdated?.();
-        } catch (e) {
-            setIndexNotice(`Indexing failed: ${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-            setIndexing(false);
-        }
-    };
+    // Semantic-search indexes are built automatically at import/seed time
+    // (autoIndexAfterImport) — no manual trigger here.
 
     const refreshKey = createMemo(() => `${props.source.id}:${props.schemaRefreshTick}`);
 
@@ -245,15 +221,6 @@ export const SourceDetail: Component<Props> = (props) => {
                     <Button size="sm" variant="secondary" onClick={() => props.onCreateView()}>
                         + View
                     </Button>
-                    <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={indexing()}
-                        onClick={() => void runIndexForSearch()}
-                        title="Embed free-text columns on-device so the assistant can match them by meaning (vector_search) instead of LIKE. First run downloads the embeddings model (~33 MB)."
-                    >
-                        {indexing() ? 'Indexing…' : 'Index for search'}
-                    </Button>
                     <SourceInfoPopover source={props.source} />
                     <Button
                         size="sm"
@@ -265,20 +232,6 @@ export const SourceDetail: Component<Props> = (props) => {
                     </Button>
                 </PaneHeaderActions>
             </PaneHeader>
-            <Show when={indexNotice()}>
-                <div class="border-b bg-muted/40 px-3 py-1.5 text-xs flex items-center gap-2">
-                    <span class="text-foreground/80 min-w-0 truncate" title={indexNotice()!}>
-                        {indexNotice()}
-                    </span>
-                    <button
-                        type="button"
-                        class="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
-                        onClick={() => setIndexNotice(null)}
-                    >
-                        dismiss
-                    </button>
-                </div>
-            </Show>
             <ConfirmDialog
                 open={pendingDrop() !== null}
                 onOpenChange={(o) => !o && setPendingDrop(null)}

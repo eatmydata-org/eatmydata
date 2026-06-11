@@ -1,10 +1,4 @@
-import {
-    For,
-    Show,
-    createMemo,
-    createSignal,
-    type Component,
-} from 'solid-js';
+import { For, Show, createMemo, createSignal, type Component } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { Button } from '@/registry/ui/button';
 import { Badge } from '@/registry/ui/badge';
@@ -51,10 +45,9 @@ export const ImportDialog: Component<Props> = (props) => {
         completed: number;
         total: number;
         current?: string;
+        phase?: 'import' | 'index';
     }>({ completed: 0, total: 0 });
-    const [outcomes, setOutcomes] = createSignal<ImportJobOutcome[] | null>(
-        null,
-    );
+    const [outcomes, setOutcomes] = createSignal<ImportJobOutcome[] | null>(null);
 
     const batchTaken = (): Set<string> => {
         const s = new Set<string>();
@@ -69,18 +62,11 @@ export const ImportDialog: Component<Props> = (props) => {
         try {
             for (const file of files) {
                 try {
-                    const staged = await stageFile(
-                        file,
-                        props.existingTableNames,
-                        taken,
-                    );
+                    const staged = await stageFile(file, props.existingTableNames, taken);
                     const items: StagedJob[] = staged.map((j) => {
                         // If a single file was opened from "Re-import…",
                         // pre-pin the conflict resolution to overwrite.
-                        if (
-                            props.pinnedTable &&
-                            j.tableName === props.pinnedTable
-                        ) {
+                        if (props.pinnedTable && j.tableName === props.pinnedTable) {
                             return {
                                 ...j,
                                 selected: true,
@@ -98,13 +84,10 @@ export const ImportDialog: Component<Props> = (props) => {
                     );
                 } catch (e) {
                     // Push a placeholder row so the user sees the error.
-                    const message =
-                        e instanceof Error ? e.message : String(e);
+                    const message = e instanceof Error ? e.message : String(e);
                     setJobs(
                         'items',
-                        produce((list) =>
-                            list.push(makeErrorJob(file.name, message)),
-                        ),
+                        produce((list) => list.push(makeErrorJob(file.name, message))),
                     );
                 }
             }
@@ -130,10 +113,7 @@ export const ImportDialog: Component<Props> = (props) => {
         void addFiles(files);
     };
 
-    const updateRow = (
-        stageId: string,
-        patch: Partial<StagedJob>,
-    ) => {
+    const updateRow = (stageId: string, patch: Partial<StagedJob>) => {
         setJobs(
             'items',
             (j) => j.stageId === stageId,
@@ -154,22 +134,16 @@ export const ImportDialog: Component<Props> = (props) => {
     const renameRow = (stageId: string, rawName: string) => {
         const sanitized = toSnakeCase(rawName) || rawName;
         // Recompute conflict flag against existing tables.
-        const conflict: StagedJob['conflict'] = props.existingTableNames.includes(
-            sanitized,
-        )
+        const conflict: StagedJob['conflict'] = props.existingTableNames.includes(sanitized)
             ? { existing: true as const, resolution: 'rename' }
             : undefined;
         updateRow(stageId, { tableName: sanitized, conflict });
     };
 
     const selectedJobs = (): StagedJob[] =>
-        jobs.items.filter(
-            (j) => j.selected && j.columnNames.length > 0 && !isErrorJob(j),
-        );
+        jobs.items.filter((j) => j.selected && j.columnNames.length > 0 && !isErrorJob(j));
 
-    const submitDisabled = createMemo(
-        () => committing() || selectedJobs().length === 0,
-    );
+    const submitDisabled = createMemo(() => committing() || selectedJobs().length === 0);
 
     const commit = async () => {
         const toRun = selectedJobs();
@@ -203,6 +177,9 @@ export const ImportDialog: Component<Props> = (props) => {
         <Dialog
             open={props.open}
             onOpenChange={(o) => {
+                // Don't let the popup close mid-import/index — stay open with
+                // progress until the tables AND their search indexes are built.
+                if (committing()) return;
                 if (!o) close();
                 else props.onOpenChange(true);
                 maybeConsumePending();
@@ -210,27 +187,16 @@ export const ImportDialog: Component<Props> = (props) => {
         >
             <DialogContent class="max-w-3xl">
                 <DialogHeader>
-                    <DialogTitle>
-                        Import into "{props.source.name}"
-                    </DialogTitle>
+                    <DialogTitle>Import into "{props.source.name}"</DialogTitle>
                     <DialogDescription>
-                        Drop CSV or XLSX files below. Each workbook sheet
-                        becomes its own table.
+                        Drop CSV or XLSX files below. Each workbook sheet becomes its own table.
                     </DialogDescription>
                 </DialogHeader>
                 <Show
                     when={outcomes() === null}
-                    fallback={
-                        <OutcomeSummary
-                            outcomes={outcomes()!}
-                            onClose={close}
-                        />
-                    }
+                    fallback={<OutcomeSummary outcomes={outcomes()!} onClose={close} />}
                 >
-                    <FileDropZone
-                        onFiles={(fs) => void addFiles(fs)}
-                        reading={reading()}
-                    />
+                    <FileDropZone onFiles={(fs) => void addFiles(fs)} reading={reading()} />
                     <input
                         type="file"
                         multiple
@@ -244,15 +210,9 @@ export const ImportDialog: Component<Props> = (props) => {
                                 <thead class="bg-muted text-muted-foreground uppercase tracking-wide text-[10px]">
                                     <tr>
                                         <th class="text-left px-2 py-1.5 w-6"></th>
-                                        <th class="text-left px-2 py-1.5">
-                                            File
-                                        </th>
-                                        <th class="text-left px-2 py-1.5">
-                                            Table name
-                                        </th>
-                                        <th class="text-left px-2 py-1.5">
-                                            Status
-                                        </th>
+                                        <th class="text-left px-2 py-1.5">File</th>
+                                        <th class="text-left px-2 py-1.5">Table name</th>
+                                        <th class="text-left px-2 py-1.5">Status</th>
                                         <th class="text-left px-2 py-1.5 w-6"></th>
                                     </tr>
                                 </thead>
@@ -261,35 +221,24 @@ export const ImportDialog: Component<Props> = (props) => {
                                         {(job) => (
                                             <JobRow
                                                 job={job}
-                                                existingTableNames={
-                                                    props.existingTableNames
-                                                }
+                                                existingTableNames={props.existingTableNames}
                                                 onToggle={(checked) =>
                                                     updateRow(job.stageId, {
                                                         selected: checked,
                                                     })
                                                 }
-                                                onRename={(name) =>
-                                                    renameRow(
-                                                        job.stageId,
-                                                        name,
-                                                    )
-                                                }
+                                                onRename={(name) => renameRow(job.stageId, name)}
                                                 onResolution={(res) =>
                                                     updateRow(job.stageId, {
                                                         conflict: job.conflict
                                                             ? {
-                                                                  existing:
-                                                                      true,
-                                                                  resolution:
-                                                                      res,
+                                                                  existing: true,
+                                                                  resolution: res,
                                                               }
                                                             : undefined,
                                                     })
                                                 }
-                                                onRemove={() =>
-                                                    removeRow(job.stageId)
-                                                }
+                                                onRemove={() => removeRow(job.stageId)}
                                             />
                                         )}
                                     </For>
@@ -299,23 +248,27 @@ export const ImportDialog: Component<Props> = (props) => {
                     </Show>
                     <Show when={committing()}>
                         <div class="text-xs text-muted-foreground">
-                            Importing {progress().completed}/{progress().total}
-                            …{' '}
+                            <Show
+                                when={progress().phase === 'index'}
+                                fallback={
+                                    <>
+                                        Importing {progress().completed}/{progress().total}…
+                                    </>
+                                }
+                            >
+                                Building search index ({progress().completed}/{progress().total}{' '}
+                                rows)…
+                            </Show>{' '}
                             <Show when={progress().current}>
-                                <span class="font-mono">
-                                    {progress().current}
-                                </span>
+                                <span class="font-mono">{progress().current}</span>
                             </Show>
                         </div>
                     </Show>
                     <DialogFooter>
-                        <Button variant="ghost" onClick={close}>
+                        <Button variant="ghost" onClick={close} disabled={committing()}>
                             Cancel
                         </Button>
-                        <Button
-                            onClick={() => void commit()}
-                            disabled={submitDisabled()}
-                        >
+                        <Button onClick={() => void commit()} disabled={submitDisabled()}>
                             {committing()
                                 ? 'Importing…'
                                 : `Import ${selectedJobs().length} file${selectedJobs().length === 1 ? '' : 's'}`}
@@ -353,9 +306,7 @@ const FileDropZone: Component<{
                 if (files.length > 0) props.onFiles(files);
             }}
         >
-            {props.reading
-                ? 'Reading files…'
-                : 'Drop CSV / XLSX files here, or pick them below.'}
+            {props.reading ? 'Reading files…' : 'Drop CSV / XLSX files here, or pick them below.'}
         </div>
     );
 };
@@ -380,9 +331,7 @@ const JobRow: Component<{
                 />
             </td>
             <td class="px-2 py-1.5 align-top">
-                <div class="font-mono text-foreground break-all">
-                    {props.job.originLabel}
-                </div>
+                <div class="font-mono text-foreground break-all">{props.job.originLabel}</div>
                 <Show when={!isError()}>
                     <div class="text-[10px] text-muted-foreground mt-0.5">
                         {props.job.columnNames.length} cols ·{' '}
@@ -396,9 +345,7 @@ const JobRow: Component<{
                         type="text"
                         class="rounded border border-border bg-background px-2 py-0.5 font-mono text-xs w-44"
                         value={props.job.tableName}
-                        onChange={(e) =>
-                            props.onRename(e.currentTarget.value.trim())
-                        }
+                        onChange={(e) => props.onRename(e.currentTarget.value.trim())}
                     />
                 </Show>
             </td>
@@ -414,10 +361,7 @@ const JobRow: Component<{
                     <Show
                         when={props.job.conflict}
                         fallback={
-                            <Badge
-                                variant="secondary"
-                                class="text-[10px] font-mono"
-                            >
+                            <Badge variant="secondary" class="text-[10px] font-mono">
                                 new
                             </Badge>
                         }
@@ -431,14 +375,9 @@ const JobRow: Component<{
                             </Badge>
                             <select
                                 class="rounded border border-border bg-background px-1.5 py-0.5 text-[11px]"
-                                value={
-                                    props.job.conflict?.resolution ?? 'rename'
-                                }
+                                value={props.job.conflict?.resolution ?? 'rename'}
                                 onChange={(e) =>
-                                    props.onResolution(
-                                        e.currentTarget
-                                            .value as ConflictResolution,
-                                    )
+                                    props.onResolution(e.currentTarget.value as ConflictResolution)
                                 }
                             >
                                 <option value="overwrite">overwrite</option>
@@ -481,9 +420,7 @@ const OutcomeSummary: Component<{
                     <For each={props.outcomes}>
                         {(o) => (
                             <tr class="border-t border-border">
-                                <td class="px-2 py-1.5 font-mono">
-                                    {o.finalTableName}
-                                </td>
+                                <td class="px-2 py-1.5 font-mono">{o.finalTableName}</td>
                                 <td class="px-2 py-1.5">
                                     <Badge
                                         variant={

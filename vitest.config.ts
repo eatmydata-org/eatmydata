@@ -48,6 +48,8 @@ export default defineConfig({
     },
     test: {
         environment: 'node',
+        // `node` has no localStorage; settings + migrations persist there.
+        setupFiles: ['./src/test-setup.ts'],
         include: [
             'src/**/*.test.ts',
             'scripts/**/*.test.ts',

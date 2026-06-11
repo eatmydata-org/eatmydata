@@ -54,6 +54,12 @@ export type ProgressTick = {
     completed: number;
     total: number;
     current?: string;
+    /**
+     * 'import' (default) = staging/landing tables; 'index' = building the
+     * semantic-search indexes the dialog blocks on before closing. During 'index'
+     * completed/total are ROWS embedded for `current` (the "table.column").
+     */
+    phase?: 'import' | 'index';
 };
 
 /**
@@ -273,14 +279,23 @@ export async function importBatch(
         }
     }
     onProgress?.({ completed: jobs.length, total: jobs.length });
-    // Best-effort, non-blocking: embed high-cardinality TEXT columns of the
-    // freshly landed tables so vector_search() works on them. Gated inside on
-    // the on-device embeddings model already being cached, so it no-ops unless
-    // the user opted into on-device models. Never affects the import outcome.
+    // Build the semantic-search indexes for the freshly landed TEXT columns BEFORE
+    // returning, so the import dialog blocks (with progress) until search is ready —
+    // cheap now with the Model2Vec static embedder. Index progress maps onto the
+    // same ProgressTick (phase:'index'). Best-effort: never throws into the outcome.
     const landedTables = outcomes
         .filter((o) => o.status === 'imported' || o.status === 'overwritten')
         .map((o) => ({ name: o.finalTableName, overwritten: o.status === 'overwritten' }));
-    if (landedTables.length > 0) autoIndexAfterImport(source, landedTables);
+    if (landedTables.length > 0) {
+        await autoIndexAfterImport(source, landedTables, (p) =>
+            onProgress?.({
+                phase: 'index',
+                completed: p.done,
+                total: p.total,
+                current: `${p.table}.${p.column}`,
+            }),
+        );
+    }
     return outcomes;
 }
 
