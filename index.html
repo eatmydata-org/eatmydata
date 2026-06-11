@@ -5,50 +5,29 @@
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>eatmydata</title>
-        <script>
-            function loadMe() {
-                let script = document.createElement('script');
-                script.src = '/src/index.tsx';
-                script.type = 'module';
-                script.async = true;
-                script.onerror = () => console.error('Error loading app');
-                document.head.appendChild(script);
+        <script type="module">
+            // Whole <script> will be replaced by dynamic chunk
+            if (!location.hostname.endsWith('eatmydata.ai')) {
+                try {
+                    const rep = await fetch('/config/app-config.json', { redirect: 'follow' });
+                    if (rep.ok) {
+                        try {
+                            window.__APP_CONFIG__ = JSON.parse(await rep.text());
+                        } catch (e) {
+                            console.warn(
+                                '[app-config] invalid /config/app-config.json; using bundled config',
+                                e,
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.warn(
+                        '[app-config] could not fetch /config/app-config.json; using bundled config',
+                        e,
+                    );
+                }
             }
-            // The public *.eatmydata.ai site ships no /config/ and uses the config
-            // bundled into the JS — skip the guaranteed-404 fetch there. Every
-            // other origin loads /config/app-config.json before the app so the
-            // first paint has the deployed config (no flicker). loadMe() always
-            // runs exactly once; a missing/404/invalid config falls back to bundled.
-            if (location.hostname.endsWith('eatmydata.ai')) {
-                loadMe();
-            } else {
-                fetch('/config/app-config.json', { redirect: 'follow' })
-                    .then(
-                        (rep) => {
-                            if (rep.status >= 200 && rep.status < 300) {
-                                rep.text().then((value) => {
-                                    try {
-                                        window.__APP_CONFIG__ = JSON.parse(value);
-                                    } catch (e) {
-                                        console.warn(
-                                            '[app-config] invalid /config/app-config.json; using bundled config',
-                                            e,
-                                        );
-                                    }
-                                    loadMe();
-                                });
-                            } else {
-                                loadMe();
-                            }
-                        },
-                        () => {
-                            loadMe();
-                        },
-                    )
-                    .catch(() => {
-                        loadMe();
-                    });
-            }
+            await import('/src/index.tsx').catch((e) => console.error('Error loading app', e));
         </script>
     </head>
     <body>
